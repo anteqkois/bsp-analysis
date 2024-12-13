@@ -94,59 +94,127 @@ def calculate_fixed_exit(entry_price, prices, fixed_profit, fixed_loss):
 
     return {'price': prices[-1], 'stop_loss_hit': False}
 
-def trade_simulation(points_below_min, data_clean, past_interval_percentage=0, past_percentage_min_dropdown: float =0,
-                     Y_trail_profit=3, Y_stop_loss=5, Y_trail_fixed_profit=0, Y_fixed_profit=10, Y_fixed_loss=5,
-                     use_avg_price=False, show_chart=True):
+def trade_simulation(
+    points_below_min: pd.DataFrame,
+    data_clean: pd.DataFrame,
+    past_interval_percentage: int = 0,
+    past_percentage_min_dropdown: float = 0,
+    Y_trail_profit: float = 3,
+    Y_stop_loss: float = 5,
+    Y_trail_fixed_profit: float = 0,
+    Y_fixed_profit: float = 10,
+    Y_fixed_loss: float = 5,
+    use_avg_price: bool = False,
+    show_chart: bool = True
+) -> pd.DataFrame:
+    """
+    Simulates trading based on provided conditions and parameters.
+
+    Args:
+        points_below_min (pd.DataFrame): Points where conditions trigger a potential trade.
+        data_clean (pd.DataFrame): Full dataset of market data.
+        past_interval_percentage (int): Time interval for past percentage drop check (minutes).
+        past_percentage_min_dropdown (float): Minimum percentage drop required in past interval.
+        Y_trail_profit (float): Trailing profit threshold (percentage).
+        Y_stop_loss (float): Stop loss threshold (percentage).
+        Y_trail_fixed_profit (float): Fixed profit threshold for trailing strategy (percentage).
+        Y_fixed_profit (float): Fixed profit target (percentage).
+        Y_fixed_loss (float): Fixed loss threshold (percentage).
+        use_avg_price (bool): Whether to use the average price for entry.
+        show_chart (bool): Whether to show a cumulative results chart.
+
+    Returns:
+        pd.DataFrame: Transactions with details of each trade.
+    """
     transactions = []
-    cumulative_result_tsl = 0
-    cumulative_result_fixed = 0
+    cumulative_in_trade_result_tsl = 0
+    cumulative_in_trade_result_fixed = 0
+    cumulative_all_result_tsl = 0
+    cumulative_all_result_fixed = 0
 
     for _, point in points_below_min.iterrows():
         entry_ts = point['ts']
+        # Initialize variables to avoid unbound issues
+        transaction_status = None
+        price_change_percent = None
+        exit_trail_price = None
+        result_tsl = None
+        stop_loss_tsl = None
+        exit_fixed_price = None
+        result_fixed = None
+        stop_loss_fixed = None
+
+        # Determine entry price
         entry_price = (point['l'] + point['h']) / 2 if use_avg_price else point['l']
 
+        # Check optional condition for past percentage drop
         if past_interval_percentage != 0 and past_percentage_min_dropdown != 0:
             past_ts = entry_ts - past_interval_percentage * 60
             past_prices = data_clean.loc[(data_clean['ts'] >= past_ts) & (data_clean['ts'] < entry_ts), 'h']
-            max_past_price = past_prices.max() if not past_prices.empty else None
+            max_past_price = past_prices.max() if not past_prices.empty else None # type: ignore
 
             if max_past_price is not None:
                 drop_percent = calculate_percentage_change(entry_price, max_past_price)
                 if drop_percent > past_percentage_min_dropdown:
-                    continue
+                    transaction_status = "Price drop not enough"
 
+        # if transaction_status is None:
+        # Calculate price change percentage
         past_ts = entry_ts - past_interval_percentage * 60
         past_price = data_clean.loc[(data_clean['ts'] - past_ts).abs().idxmin(), 'l']
         price_change_percent = calculate_percentage_change(entry_price, past_price)
-
-        prices_after_entry = data_clean.loc[data_clean['ts'] >= entry_ts, 'h'].values
-
+        # Get prices after entry
+        prices_after_entry = data_clean.loc[data_clean['ts'] >= entry_ts, 'h'].values # type: ignore
+        # Trailing stop-loss exit
         trail_exit = calculate_trailing_exit(entry_price, prices_after_entry, Y_trail_profit, Y_stop_loss, Y_trail_fixed_profit)
+        exit_trail_price = trail_exit['price'] if 'price' in trail_exit else None
+        stop_loss_tsl = trail_exit.get('stop_loss_hit', False)
+        result_tsl = calculate_percentage_change(exit_trail_price, entry_price) if exit_trail_price else -Y_stop_loss
+        # Fixed profit/loss exit
         fixed_exit = calculate_fixed_exit(entry_price, prices_after_entry, Y_fixed_profit, Y_fixed_loss)
+        exit_fixed_price = fixed_exit['price'] if 'price' in fixed_exit else None
+        stop_loss_fixed = fixed_exit.get('stop_loss_hit', False)
+        result_fixed = calculate_percentage_change(exit_fixed_price, entry_price) if exit_fixed_price else -Y_fixed_loss
+        # Update cumulative results
+        cumulative_in_trade_result_tsl += result_tsl if transaction_status is None else 0
+        cumulative_in_trade_result_fixed += result_fixed if transaction_status is None else 0
+        cumulative_all_result_tsl += result_tsl
+        cumulative_all_result_fixed += result_fixed
+        # else:
+        #     # Skip the trade, no changes to cumulative results
+        #     price_change_percent = None
+        #     exit_trail_price = None
+        #     result_tsl = None
+        #     stop_loss_tsl = None
+        #     exit_fixed_price = None
+        #     result_fixed = None
 
-        result_tsl = calculate_percentage_change(trail_exit['price'], entry_price)
-        result_fixed = calculate_percentage_change(fixed_exit['price'], entry_price)
-
-        cumulative_result_tsl += result_tsl
-        cumulative_result_fixed += result_fixed
-
+        # Add transaction details
         transactions.append({
             'entry_ts': entry_ts,
             'entry_price': entry_price,
             'price_change_percent': price_change_percent,
-            'exit_trail_price': trail_exit['price'],
+            'exit_trail_price': exit_trail_price,
             'result_tsl': result_tsl,
-            'exit_fixed_price': fixed_exit['price'],
+            'stop_loss_tsl': stop_loss_tsl,
+            'exit_fixed_price': exit_fixed_price,
             'result_fixed': result_fixed,
-            'cumulative_result_tsl': cumulative_result_tsl,
-            'cumulative_result_fixed': cumulative_result_fixed
+            'stop_loss_fixed': stop_loss_fixed,
+            'cumulative_in_trade_result_tsl': cumulative_in_trade_result_tsl,
+            'cumulative_in_trade_result_fixed': cumulative_in_trade_result_fixed,
+            'cumulative_all_result_tsl': cumulative_all_result_tsl,
+            'cumulative_all_result_fixed': cumulative_all_result_fixed,
+            'transaction_status': transaction_status or "Trade"
         })
 
+    # Plot cumulative results
     if show_chart:
         transactions_df = pd.DataFrame(transactions)
         plt.figure(figsize=(12, 6))
-        plt.plot(transactions_df['entry_ts'], transactions_df['cumulative_result_tsl'], label='TSL Strategy', color='blue')
-        plt.plot(transactions_df['entry_ts'], transactions_df['cumulative_result_fixed'], label='Fixed Strategy', color='red')
+        plt.plot(transactions_df['entry_ts'], transactions_df['cumulative_in_trade_result_tsl'], label='TSL Strategy Traded', color='blue')
+        plt.plot(transactions_df['entry_ts'], transactions_df['cumulative_in_trade_result_fixed'], label='Fixed Strategy Traded', color='red')
+        plt.plot(transactions_df['entry_ts'], transactions_df['cumulative_all_result_tsl'], label='TSL Strategy All', color='blue', alpha=0.5)
+        plt.plot(transactions_df['entry_ts'], transactions_df['cumulative_all_result_fixed'], label='Fixed Strategy All', color='red', alpha=0.5)
         plt.xlabel('Timestamp')
         plt.ylabel('Cumulative Result (%)')
         plt.title('Cumulative Results: TSL vs Fixed Strategy')
@@ -155,11 +223,12 @@ def trade_simulation(points_below_min, data_clean, past_interval_percentage=0, p
         plt.show()
 
     return pd.DataFrame(transactions)
+
 # %%
 transactions = trade_simulation(points_below_min, data_clean, past_interval_percentage=120, past_percentage_min_dropdown=-2.5,
                                  Y_trail_profit=5, Y_stop_loss=10, Y_trail_fixed_profit=6, Y_fixed_profit=6, Y_fixed_loss=5)
 
-transactions.to_json("transactions.json", orient='records', indent=4)
-print(transactions.tail(1)[['cumulative_result_tsl', 'cumulative_result_fixed']])
-
 # %%
+transactions.to_json("transactions.json", orient='records', indent=4)
+print(transactions.tail(1)[['cumulative_in_trade_result_tsl', 'cumulative_in_trade_result_fixed', 'cumulative_all_result_tsl', 'cumulative_all_result_fixed']])
+

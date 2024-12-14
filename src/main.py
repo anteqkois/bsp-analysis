@@ -1,4 +1,6 @@
 # %%
+# %load_ext autoreload # type: ignore
+# %autoreload 2 # type: ignore
 # Install a pip package in the current Jupyter kernel
 import sys
 !{sys.executable} -m pip install numpy pandas scipy matplotlib # type: ignore
@@ -8,7 +10,47 @@ import json
 from datetime import datetime, timedelta
 from scipy.signal import find_peaks
 import matplotlib.pyplot as plt
+# from utils.helpers import get_interval_coefficient, calculate_percentage_change
+# module_path = os.path.abspath(os.path.join('..', 'utils/helpers.py'))
+# print(module_path)
+# if module_path not in sys.path:
+#     sys.path.append(module_path)
+# from utils.helpers import get_interval_coefficient, calculate_percentage_change
 
+# Settings
+interval = '1m'
+
+# Helpers
+def get_interval_coefficient(interval):
+    if interval == '1m' or interval == 'block':
+        return 60
+    elif interval == '5m':
+        return 60 * 5
+    elif interval == '10m':
+        return 60 * 10
+    elif interval == '15m':
+        return 60 * 15
+    elif interval == '1h' or interval == 'hour':
+        return 60 * 60
+    elif interval == '2h':
+        return 60 * 60 * 2
+    elif interval == '4h':
+        return 60 * 60 * 4
+    elif interval == '12h':
+        return 60 * 60 * 12
+    elif interval == '1d' or interval == 'day':
+        return 60 * 60 * 24
+    elif interval == '3d':
+        return 60 * 60 * 72
+    elif interval == '1w':
+        return 60 * 60 * 24 * 7
+    elif interval == '1M':
+        return 60 * 60 * 24 * 31
+    else:
+        return 60
+
+def calculate_percentage_change(current_price, past_price):
+    return (current_price - past_price) / past_price * 100
 # %%
 # Load data
 data = pd.read_json("../data/data-crypto-TAOUSDT.json")
@@ -42,7 +84,7 @@ points_below_min = data_clean[data_clean.loc[:, 'below_min']]
 print(f"Number of points below min: {len(points_below_min)}")
 
 # %%
-def filter_points(data, min_gap):
+def filter_points(data, min_interval_gap):
     # Ensure data is an independent DataFrame
     data = data.copy()
 
@@ -51,7 +93,7 @@ def filter_points(data, min_gap):
 
     for idx, row in data.iterrows():
         if row['below_min']:
-            if (row['ts'] - last_valid_time) >= min_gap * 60:
+            if (row['ts'] - last_valid_time) >= min_interval_gap * get_interval_coefficient(interval):
                 data.at[idx, 'filterOne'] = True
                 last_valid_time = row['ts']
 
@@ -64,9 +106,6 @@ min_gap = 2
 points_below_min = filter_points(points_below_min, min_gap)
 
 # %%
-def calculate_percentage_change(current_price, past_price):
-    return (current_price - past_price) / past_price * 100
-
 def calculate_trailing_exit(entry_price, prices, trailing_stop_loss, stop_loss, fixed_profit):
     max_price = entry_price
     for price in prices:
@@ -149,7 +188,7 @@ def trade_simulation(
 
         # Check optional condition for past percentage drop
         if past_interval_percentage != 0 and past_percentage_min_dropdown != 0:
-            past_ts = entry_ts - past_interval_percentage * 60
+            past_ts = entry_ts - past_interval_percentage * get_interval_coefficient(interval)
             past_prices = data_clean.loc[(data_clean['ts'] >= past_ts) & (data_clean['ts'] < entry_ts), 'h']
             max_past_price = past_prices.max() if not past_prices.empty else None # type: ignore
 
@@ -160,7 +199,7 @@ def trade_simulation(
 
         # if transaction_status is None:
         # Calculate price change percentage
-        past_ts = entry_ts - past_interval_percentage * 60
+        past_ts = entry_ts - past_interval_percentage * get_interval_coefficient(interval)
         past_price = data_clean.loc[(data_clean['ts'] - past_ts).abs().idxmin(), 'l']
         price_change_percent = calculate_percentage_change(entry_price, past_price)
         # Get prices after entry
@@ -232,3 +271,5 @@ transactions = trade_simulation(points_below_min, data_clean, past_interval_perc
 transactions.to_json("transactions.json", orient='records', indent=4)
 print(transactions.tail(1)[['cumulative_in_trade_result_tsl', 'cumulative_in_trade_result_fixed', 'cumulative_all_result_tsl', 'cumulative_all_result_fixed']])
 
+
+# %%

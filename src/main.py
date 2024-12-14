@@ -14,6 +14,18 @@ from typing import Optional
 interval = '1m'
 
 # Helpers
+def preprocess_points_above_max(points_above_max):
+    """
+    Preprocess points_above_max into an IntervalIndex for faster lookups.
+    """
+    if points_above_max is not None and not points_above_max.empty:
+        # Create an IntervalIndex for the range (start_ts, end_ts) mapped to price ('h')
+        intervals = pd.IntervalIndex.from_arrays(
+            points_above_max['ts'], points_above_max['ts'], closed='both'
+        )
+        return pd.Series(points_above_max['h'].values, index=intervals)
+    return None
+
 def get_interval_coefficient(interval):
     if interval == '1m' or interval == 'block':
         return 60
@@ -45,55 +57,56 @@ def get_interval_coefficient(interval):
 def calculate_percentage_change(current_price, past_price):
     return (current_price - past_price) / past_price * 100
 
-
-def calculate_trailing_exit(entry_price, prices, trailing_stop_loss, stop_loss, fixed_profit, 
-                             use_max_bsp_exit=False, points_above_max=None):
+def calculate_trailing_exit(entry_price, prices, trailing_stop_loss, stop_loss, fixed_profit,
+                            use_trailing_stop_loss = False, use_stop_loss = False, use_fixed_profit = False,
+                            use_max_bsp_exit = False, points_above_max_preprocessed = None):
     max_price = entry_price
+
     for price in prices:
         if price > max_price:
             max_price = price
 
-        if fixed_profit != 0 and price >= entry_price * (1 + fixed_profit / 100):
+        if use_fixed_profit and fixed_profit != 0 and price >= entry_price * (1 + fixed_profit / 100):
             return {'price': price, 'exit_reason': 'Fixed Profit'}
 
-        if price > entry_price and price <= max_price * (1 - trailing_stop_loss / 100):
+        if use_trailing_stop_loss and price > entry_price and price <= max_price * (1 - trailing_stop_loss / 100):
             return {'price': price, 'exit_reason': 'TSL'}
 
-        if price <= entry_price * (1 - stop_loss / 100):
+        if use_stop_loss and price <= entry_price * (1 - stop_loss / 100):
             return {'price': entry_price * (1 - stop_loss / 100), 'exit_reason': 'Stop Loss'}
 
-        if use_max_bsp_exit and points_above_max is not None:
+        if use_max_bsp_exit and points_above_max_preprocessed is not None:
             # Check if max_bsp was crossed after entry
-            max_bsp_crossed = points_above_max[(points_above_max['ts'] >= entry_price) & (points_above_max['ts'] <= price)]
-            if not max_bsp_crossed.empty:
-                return {'price': max_bsp_crossed.iloc[0]['h'], 'exit_reason': 'Max BSP Crossed'}
+            intervals = points_above_max_preprocessed.index
+            matches = intervals.contains(price)
+            if matches.any():
+                # Exit at the first match
+                return {'price': points_above_max_preprocessed[matches].iloc[0], 'exit_reason': 'Max BSP Crossed'}
 
     return {'price': prices[-1], 'exit_reason': None}
 
-def calculate_fixed_exit(entry_price, prices, fixed_profit, fixed_loss, 
-                         use_max_bsp_exit=False, points_above_max=None):
+def calculate_fixed_exit(entry_price, prices, fixed_profit, fixed_loss, use_stop_loss=False, use_fixed_profit=False,
+                         use_max_bsp_exit=False, points_above_max_preprocessed=None):
     for price in prices:
-        if price >= entry_price * (1 + fixed_profit / 100):
+        if use_fixed_profit and price >= entry_price * (1 + fixed_profit / 100):
             return {'price': price, 'exit_reason': 'Fixed Profit'}
 
-        if price <= entry_price * (1 - fixed_loss / 100):
+        if use_stop_loss and price <= entry_price * (1 - fixed_loss / 100):
             return {'price': entry_price * (1 - fixed_loss / 100), 'exit_reason': 'Stop Loss'}
 
-        if use_max_bsp_exit and points_above_max is not None:
+        if use_max_bsp_exit and points_above_max_preprocessed is not None:
             # Check if max_bsp was crossed after entry
-            max_bsp_crossed = points_above_max[(points_above_max['ts'] >= entry_price) & (points_above_max['ts'] <= price)]
-            if not max_bsp_crossed.empty:
-                return {'price': max_bsp_crossed.iloc[0]['h'], 'exit_reason': 'Max BSP Crossed'}
+            intervals = points_above_max_preprocessed.index
+            matches = intervals.contains(price)
+            if matches.any():
+                # Exit at the first match
+                return {'price': points_above_max_preprocessed[matches].iloc[0], 'exit_reason': 'Max BSP Crossed'}
 
     return {'price': prices[-1], 'exit_reason': None}
-
 # %%
 # Load data
 data = pd.read_json("../data/data-crypto-TAOUSDT.json")
 data.drop(columns=['ticker'], inplace=True)
-# print(data.info())  # Logs column names, types, and null counts
-# print(data.head())  # Shows the first few rows
-# print(data.describe())  # Provides statistical summary for numeric columns
 
 # %%
 # Handle missing values
@@ -158,6 +171,9 @@ def trade_simulation(
     Y_fixed_loss: float = 5,
     use_avg_price: bool = False,
     show_chart: bool = True,
+    use_stop_loss: bool = False,
+    use_trailing_stop_loss: bool = False,
+    use_fixed_profit: bool = False,
     use_max_bsp_exit: bool = False,
     points_above_max: Optional[pd.DataFrame] = None
 ) -> pd.DataFrame:
@@ -186,8 +202,10 @@ def trade_simulation(
     cumulative_all_result_tsl = 0
     cumulative_all_result_fixed = 0
 
+    points_above_max_preprocessed = preprocess_points_above_max(points_above_max)
+
     for _, point in points_below_min.iterrows():
-        print(f"Number of points above max: {point['ts']}")
+        print(f"Transaction: {point['ts']}")
         entry_ts = point['ts']
         # Initialize variables to avoid unbound issues
         transaction_status = None
@@ -222,13 +240,13 @@ def trade_simulation(
         prices_after_entry = data_clean.loc[data_clean['ts'] >= entry_ts, 'h'].values # type: ignore
         
         # Trailing stop-loss exit
-        trail_exit = calculate_trailing_exit(entry_price, prices_after_entry, Y_trail_profit, Y_stop_loss, Y_trail_fixed_profit, use_max_bsp_exit, points_above_max)
+        trail_exit = calculate_trailing_exit(entry_price, prices_after_entry, Y_trail_profit, Y_stop_loss, Y_trail_fixed_profit, use_trailing_stop_loss, use_stop_loss, use_fixed_profit,  use_max_bsp_exit, points_above_max_preprocessed)
         exit_trail_price = trail_exit['price'] if 'price' in trail_exit else None
         tsl_exit_reason = trail_exit['exit_reason']
         result_tsl = calculate_percentage_change(exit_trail_price, entry_price) if exit_trail_price else -Y_stop_loss
         
         # Fixed profit/loss exit
-        fixed_exit = calculate_fixed_exit(entry_price, prices_after_entry, Y_fixed_profit, Y_fixed_loss, use_max_bsp_exit, points_above_max)
+        fixed_exit = calculate_fixed_exit(entry_price, prices_after_entry, Y_fixed_profit, Y_fixed_loss, use_stop_loss, use_fixed_profit, use_max_bsp_exit, points_above_max_preprocessed)
         exit_fixed_price = fixed_exit['price'] if 'price' in fixed_exit else None
         fixed_exit_reason = fixed_exit['exit_reason']
         result_fixed = calculate_percentage_change(exit_fixed_price, entry_price) if exit_fixed_price else -Y_fixed_loss
@@ -275,19 +293,21 @@ def trade_simulation(
     return pd.DataFrame(transactions)
 
 # %%
-# Trades without BSP max
-transactions_without_bsp_max = trade_simulation(points_below_min, data_clean, past_interval_percentage=120, past_percentage_min_dropdown=-2.5,
-                                 Y_trail_profit=5, Y_stop_loss=10, Y_trail_fixed_profit=6, Y_fixed_profit=6, Y_fixed_loss=5)
+# # Trades without BSP max
+# transactions_without_bsp_max = trade_simulation(points_below_min, data_clean, past_interval_percentage=120, past_percentage_min_dropdown=-2.5,
+#                                  Y_trail_profit=5, Y_stop_loss=10, Y_trail_fixed_profit=6, Y_fixed_profit=6, Y_fixed_loss=5, use_stop_loss = True,
+#                                  use_trailing_stop_loss = True, use_fixed_profit = True, use_max_bsp_exit = False, points_above_max=points_above_max)
 
-# %%
-transactions_without_bsp_max.to_json("transactions_without_bsp_max.json", orient='records', indent=4)
-print(transactions_without_bsp_max.tail(1)[['cumulative_in_trade_result_tsl', 'cumulative_in_trade_result_fixed', 'cumulative_all_result_tsl', 'cumulative_all_result_fixed']])
+# # %%
+# transactions_without_bsp_max.to_json("transactions_without_bsp_max.json", orient='records', indent=4)
+# print(transactions_without_bsp_max.tail(1)[['cumulative_in_trade_result_tsl', 'cumulative_in_trade_result_fixed', 'cumulative_all_result_tsl', 'cumulative_all_result_fixed']])
 
 
 # %%
 # Trades with BSP max
-transactions_with_bsp_max = trade_simulation(points_below_min, data_clean, past_interval_percentage=120, past_percentage_min_dropdown=-2.5,
-                                 Y_trail_profit=5, Y_stop_loss=10, Y_trail_fixed_profit=6, Y_fixed_profit=6, Y_fixed_loss=5, use_max_bsp_exit=True, points_above_max=points_above_max)
+transactions_with_bsp_max = trade_simulation(points_below_min.iloc[:1], data_clean, past_interval_percentage=120, past_percentage_min_dropdown=-2.5,
+                                 Y_trail_profit=5, Y_stop_loss=10, Y_trail_fixed_profit=6, Y_fixed_profit=6, Y_fixed_loss=5, use_stop_loss = False,
+                                 use_trailing_stop_loss = False, use_fixed_profit = False, use_max_bsp_exit = True, points_above_max=points_above_max)
 
 # %%
 transactions_with_bsp_max.to_json("transactions_with_bsp_max.json", orient='records', indent=4)

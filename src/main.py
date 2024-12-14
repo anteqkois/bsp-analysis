@@ -1,6 +1,4 @@
 # %%
-# %load_ext autoreload # type: ignore
-# %autoreload 2 # type: ignore
 # Install a pip package in the current Jupyter kernel
 import sys
 !{sys.executable} -m pip install numpy pandas scipy matplotlib # type: ignore
@@ -10,12 +8,6 @@ import json
 from datetime import datetime, timedelta
 from scipy.signal import find_peaks
 import matplotlib.pyplot as plt
-# from utils.helpers import get_interval_coefficient, calculate_percentage_change
-# module_path = os.path.abspath(os.path.join('..', 'utils/helpers.py'))
-# print(module_path)
-# if module_path not in sys.path:
-#     sys.path.append(module_path)
-# from utils.helpers import get_interval_coefficient, calculate_percentage_change
 
 # Settings
 interval = '1m'
@@ -51,6 +43,34 @@ def get_interval_coefficient(interval):
 
 def calculate_percentage_change(current_price, past_price):
     return (current_price - past_price) / past_price * 100
+
+def calculate_trailing_exit(entry_price, prices, trailing_stop_loss, stop_loss, fixed_profit):
+    max_price = entry_price
+    for price in prices:
+        if price > max_price:
+            max_price = price
+
+        if fixed_profit != 0 and price >= entry_price * (1 + fixed_profit / 100):
+            return {'price': price, 'stop_loss_hit': False}
+
+        if price > entry_price and price <= max_price * (1 - trailing_stop_loss / 100):
+            return {'price': price, 'stop_loss_hit': False}
+
+        if price <= entry_price * (1 - stop_loss / 100):
+            return {'price': entry_price * (1 - stop_loss / 100), 'stop_loss_hit': True}
+
+    return {'price': prices[-1], 'stop_loss_hit': False}
+
+def calculate_fixed_exit(entry_price, prices, fixed_profit, fixed_loss):
+    for price in prices:
+        if price >= entry_price * (1 + fixed_profit / 100):
+            return {'price': price, 'stop_loss_hit': False}
+
+        if price <= entry_price * (1 - fixed_loss / 100):
+            return {'price': entry_price * (1 - fixed_loss / 100), 'stop_loss_hit': True}
+
+    return {'price': prices[-1], 'stop_loss_hit': False}
+
 # %%
 # Load data
 data = pd.read_json("../data/data-crypto-TAOUSDT.json")
@@ -106,33 +126,6 @@ min_gap = 2
 points_below_min = filter_points(points_below_min, min_gap)
 
 # %%
-def calculate_trailing_exit(entry_price, prices, trailing_stop_loss, stop_loss, fixed_profit):
-    max_price = entry_price
-    for price in prices:
-        if price > max_price:
-            max_price = price
-
-        if fixed_profit != 0 and price >= entry_price * (1 + fixed_profit / 100):
-            return {'price': price, 'stop_loss_hit': False}
-
-        if price > entry_price and price <= max_price * (1 - trailing_stop_loss / 100):
-            return {'price': price, 'stop_loss_hit': False}
-
-        if price <= entry_price * (1 - stop_loss / 100):
-            return {'price': entry_price * (1 - stop_loss / 100), 'stop_loss_hit': True}
-
-    return {'price': prices[-1], 'stop_loss_hit': False}
-
-def calculate_fixed_exit(entry_price, prices, fixed_profit, fixed_loss):
-    for price in prices:
-        if price >= entry_price * (1 + fixed_profit / 100):
-            return {'price': price, 'stop_loss_hit': False}
-
-        if price <= entry_price * (1 - fixed_loss / 100):
-            return {'price': entry_price * (1 - fixed_loss / 100), 'stop_loss_hit': True}
-
-    return {'price': prices[-1], 'stop_loss_hit': False}
-
 def trade_simulation(
     points_below_min: pd.DataFrame,
     data_clean: pd.DataFrame,

@@ -25,3 +25,6 @@ def get_interval_coefficient(interval):
         return 60 * 60 * 24 * 31
     else:
         return 60
+
+def calculate_percentage_change(current_price, past_price):
+    return (current_price - past_price) / past_price * 100

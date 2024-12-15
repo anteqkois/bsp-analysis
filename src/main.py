@@ -46,73 +46,109 @@ def get_interval_coefficient(interval):
 def calculate_percentage_change(current_price, past_price):
     return (current_price - past_price) / past_price * 100
 
-def calculate_trailing_exit(entry_row, rows, trailing_stop_loss, stop_loss, fixed_profit,
-                            use_trailing_stop_loss = False, use_stop_loss = False, use_fixed_profit = False,
-                            use_max_bsp_exit = False, points_above_max = None, price_accesssor = 'avg'):
-    
-    entry_price = entry_row[price_accesssor]
+def calculate_trailing_exit(
+    entry_row, rows, trailing_stop_loss, stop_loss, fixed_profit, 
+    use_trailing_stop_loss=False, use_stop_loss=False, use_fixed_profit=False,
+    use_max_bsp_exit=False, points_above_max=None, price_accessor='avg'
+):
+    entry_price = entry_row[price_accessor]
     entry_ts = entry_row['ts']
-    max_price = entry_price
-    
-    # Filter points_above_max to only rows after entry_ts for faster lookup
+
+    # Pre-filter rows to improve lookup
+    rows_after_entry = rows[rows['ts'] > entry_ts]
+
+    # Handle max BSP exit
     if use_max_bsp_exit and points_above_max is not None:
         points_above_max_filtered = points_above_max[points_above_max['ts'] > entry_ts]
-        point_bsp_exit = points_above_max_filtered.iloc[0] if not points_above_max_filtered.empty else None
-        if point_bsp_exit is None:
+        if not points_above_max_filtered.empty:
+            max_bsp_ts = points_above_max_filtered.iloc[0]['ts']
+            rows_after_entry = rows_after_entry[rows_after_entry['ts'] <= max_bsp_ts]
+        else:
             use_max_bsp_exit = False
-    else:
-        point_bsp_exit = None
-        use_max_bsp_exit = False
-    
-    for index, row in rows.iterrows():
-        loop_price: float = row[price_accesssor]
-        loop_ts: int = row['ts']
-        
-        if loop_price > max_price:
-            max_price = loop_price
-        
-        if use_fixed_profit and fixed_profit != 0 and loop_price >= entry_price * (1 + fixed_profit / 100):
-            return {'price': loop_price, 'ts': loop_ts, 'exit_reason': 'Fixed Profit'}
 
-        if use_trailing_stop_loss and loop_price > entry_price and loop_price <= max_price * (1 - trailing_stop_loss / 100):
-            return {'price': loop_price, 'ts': loop_ts, 'exit_reason': 'TSL'}
+    # Initialize exit list
+    exits = []
 
-        if use_stop_loss and loop_price <= entry_price * (1 - stop_loss / 100):
-            return {'price': loop_price * (1 - stop_loss / 100), 'ts': loop_ts, 'exit_reason': 'Stop Loss'}
+    # Fixed Profit Exit
+    if use_fixed_profit:
+        fixed_profit_exit = rows_after_entry[rows_after_entry[price_accessor] >= entry_price * (1 + fixed_profit / 100)]
+        if not fixed_profit_exit.empty:
+            row = fixed_profit_exit.iloc[0]
+            exits.append({'price': row[price_accessor], 'ts': row['ts'], 'exit_reason': 'Fixed Profit'})
 
-        if use_max_bsp_exit and point_bsp_exit is not None and point_bsp_exit['ts'] >= loop_ts:
-            return {'price': loop_price, 'ts': loop_ts, 'exit_reason': 'Max BSP Crossed'}
+    # Trailing Stop Loss Exit
+    if use_trailing_stop_loss:
+        # Filter rows where price exceeds entry price (required for valid TSL activation)
+        rows_above_entry = rows_after_entry[rows_after_entry[price_accessor] > entry_price]
+        if not rows_above_entry.empty:
+            max_price = rows_above_entry[price_accessor].cummax()
+            tsl_exit = rows_above_entry[rows_above_entry[price_accessor] <= max_price * (1 - trailing_stop_loss / 100)]
+            if not tsl_exit.empty:
+                row = tsl_exit.iloc[0]
+                exits.append({'price': row[price_accessor], 'ts': row['ts'], 'exit_reason': 'TSL'})
 
+    # Stop Loss Exit
+    if use_stop_loss:
+        stop_loss_exit = rows_after_entry[rows_after_entry[price_accessor] <= entry_price * (1 - stop_loss / 100)]
+        if not stop_loss_exit.empty:
+            row = stop_loss_exit.iloc[0]
+            exits.append({'price': row[price_accessor], 'ts': row['ts'], 'exit_reason': 'Stop Loss'})
+
+    # Select the earliest exit based on timestamp
+    if exits:
+        earliest_exit = min(exits, key=lambda x: x['ts'])
+        return earliest_exit
+
+    # Default: No exit found
     return {'price': entry_price, 'ts': 0, 'exit_reason': None}
 
-def calculate_fixed_exit(entry_row, rows, fixed_profit, fixed_loss, use_stop_loss=False, use_fixed_profit=False,
-                         use_max_bsp_exit=False, points_above_max=None, price_accesssor = 'avg'):
-
-    entry_price = entry_row[price_accesssor]
+def calculate_fixed_exit(
+    entry_row, rows, fixed_profit, fixed_loss, use_stop_loss=False, use_fixed_profit=False,
+    use_max_bsp_exit=False, points_above_max=None, price_accessor='avg'
+):
+    entry_price = entry_row[price_accessor]
     entry_ts = entry_row['ts']
-    
-    # Filter points_above_max to only rows after entry_ts for faster lookup
+
+    # Pre-filter rows for faster lookup
+    rows_after_entry = rows[rows['ts'] > entry_ts]
+
+    # Handle Max BSP Exit
     if use_max_bsp_exit and points_above_max is not None:
         points_above_max_filtered = points_above_max[points_above_max['ts'] > entry_ts]
-        point_bsp_exit = points_above_max_filtered.iloc[0] if not points_above_max_filtered.empty else None
-        if point_bsp_exit is None:
+        if not points_above_max_filtered.empty:
+            point_bsp_exit_ts = points_above_max_filtered.iloc[0]['ts']
+            rows_after_entry = rows_after_entry[rows_after_entry['ts'] <= point_bsp_exit_ts]
+        else:
             use_max_bsp_exit = False
-    else:
-        point_bsp_exit = None
-        use_max_bsp_exit = False
-    
-    for index, row in rows.iterrows():
-        loop_price: float = row[price_accesssor]
-        loop_ts: int = row['ts']
-        if use_fixed_profit and loop_price >= entry_price * (1 + fixed_profit / 100):
-            return {'price': row['price'], 'ts': loop_ts, 'exit_reason': 'Fixed Profit'}
 
-        if use_stop_loss and loop_price <= entry_price * (1 - fixed_loss / 100):
-            return {'price': loop_price, 'ts': loop_ts, 'exit_reason': 'Stop Loss'}
+    # Collect potential exits
+    exits = []
 
-        if use_max_bsp_exit and point_bsp_exit is not None and point_bsp_exit['ts'] >= loop_ts:
-            return {'price': loop_price, 'ts': loop_ts, 'exit_reason': 'Max BSP Crossed'}
+    # Fixed Profit Exit
+    if use_fixed_profit:
+        fixed_profit_exit = rows_after_entry[rows_after_entry[price_accessor] >= entry_price * (1 + fixed_profit / 100)]
+        if not fixed_profit_exit.empty:
+            row = fixed_profit_exit.iloc[0]
+            exits.append({'price': row[price_accessor], 'ts': row['ts'], 'exit_reason': 'Fixed Profit'})
 
+    # Stop Loss Exit
+    if use_stop_loss:
+        stop_loss_exit = rows_after_entry[rows_after_entry[price_accessor] <= entry_price * (1 - fixed_loss / 100)]
+        if not stop_loss_exit.empty:
+            row = stop_loss_exit.iloc[0]
+            exits.append({'price': row[price_accessor], 'ts': row['ts'], 'exit_reason': 'Stop Loss'})
+
+    # Max BSP Exit
+    if use_max_bsp_exit and not rows_after_entry.empty:
+        row = rows_after_entry.iloc[0]  # First row within Max BSP time constraint
+        exits.append({'price': row[price_accessor], 'ts': row['ts'], 'exit_reason': 'Max BSP Crossed'})
+
+    # Select the earliest exit based on timestamp
+    if exits:
+        earliest_exit = min(exits, key=lambda x: x['ts'])
+        return earliest_exit
+
+    # Default: No exit found
     return {'price': entry_price, 'ts': 0, 'exit_reason': None}
 
 # %%
@@ -122,10 +158,7 @@ data.drop(columns=['ticker'], inplace=True)
 
 # %%
 # Handle missing values
-if data.isna().any().any():
-    data_clean = data.dropna().copy()  # Use .copy() to create an explicit copy
-else:
-    data_clean = data.copy()
+data_clean = data.copy().dropna()
 print(f"Number of records after clean: {len(data_clean)}")
 
 # %%
@@ -256,6 +289,12 @@ def trade_simulation(
         # Fixed profit/loss exit
         fixed_exit = calculate_fixed_exit(point, rows_after_entry, Y_fixed_profit, Y_fixed_loss, use_stop_loss, use_fixed_profit, use_max_bsp_exit, points_above_max, 'l')
         result_fixed = calculate_percentage_change(fixed_exit['price'], entry_price) if fixed_exit['price'] else 0
+        # fixed_exit = {
+        #     'price': 1,
+        #     'ts': 1, 
+        #     'exit_reason': ''
+        # }
+        # result_fixed = 0
         
         # Update cumulative results
         cumulative_in_trade_result_tsl += result_tsl if transaction_status is None else 0

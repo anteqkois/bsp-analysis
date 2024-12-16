@@ -53,62 +53,92 @@ def calculate_trailing_exit(entry_row, rows, trailing_stop_loss, stop_loss, fixe
     max_price = entry_h
     stop_loss_price = entry_c * (1 - stop_loss / 100)
 
-    # Ensure compatibility with both DataFrame and ndarray
-    for ts, h, l , c in rows: # Assuming prices is a 2D array with columns [ts, h, l, c]
-        # Update max price
-        if h > max_price:
-            max_price = h
+    exit_points = []
 
-        # Check fixed profit condition
-        if use_fixed_profit and fixed_profit != 0 and h >= entry_c * (1 + fixed_profit / 100):
-            return {'price': h, 'exit_reason': 'Fixed Profit', 'ts': ts}
+    # Update max price vectorized
+    rows['max_price'] = rows['h'].cummax()
 
-        # Check trailing stop loss condition
-        if use_trailing_stop_loss and h > entry_c and h <= max_price * (1 - trailing_stop_loss / 100):
-            return {'price': h, 'exit_reason': 'TSL', 'ts': ts}
+    # Check for fixed profit exit condition
+    if use_fixed_profit and fixed_profit != 0:
+        fixed_profit_rows = rows[rows['h'] >= entry_c * (1 + fixed_profit / 100)]
+        if not fixed_profit_rows.empty:
+            first_fixed_profit_row = fixed_profit_rows.iloc[0]
+            exit_points.append({'price': first_fixed_profit_row['h'], 'exit_reason': 'Fixed Profit', 'ts': first_fixed_profit_row['ts']})
 
-        # Check fixed stop loss condition
-        if use_stop_loss and l <= stop_loss_price:
-            return {'price': stop_loss_price, 'exit_reason': 'Stop Loss', 'ts': ts}
+    # Check for trailing stop loss exit condition
+    if use_trailing_stop_loss:
+        tsl_rows = rows[(rows['h'] > entry_c) & (rows['h'] <= rows['max_price'] * (1 - trailing_stop_loss / 100))]
+        if not tsl_rows.empty:
+            first_trailing_stop_loss_row = tsl_rows.iloc[0]
+            exit_points.append({'price': first_trailing_stop_loss_row['h'], 'exit_reason': 'TSL', 'ts': first_trailing_stop_loss_row['ts']})
 
-        # Check max BSP exit condition
-        if use_max_bsp_exit and points_above_max is not None:
-            intervals = points_above_max.index
-            matches = intervals.contains(h)
-            if matches.any():
-                return {'price': points_above_max[matches].iloc[0], 'exit_reason': 'Max BSP Crossed', 'ts': ts}
+    # Check for stop loss exit condition
+    if use_stop_loss:
+        stop_loss_rows = rows[rows['l'] <= stop_loss_price]
+        if not stop_loss_rows.empty:
+            first_stop_loss_row = stop_loss_rows.iloc[0]
+            exit_points.append({'price': stop_loss_price, 'exit_reason': 'Stop Loss', 'ts': first_stop_loss_row['ts']})
 
-    # If no exit condition met
-    last_row_ts, last_row_h, last_row_l , last_row_c = rows[-1]
-    return {'price': last_row_c, 'exit_reason': None, 'ts': last_row_ts}
+    # Check for Max BSP exit condition if enabled
+    if use_max_bsp_exit and points_above_max is not None:
+        # Filter for points where `above_max` is True and `ts` > entry_ts
+        filtered_points = points_above_max[(points_above_max['above_max'] == True) & (points_above_max['ts'] > entry_ts)]
+
+        if not filtered_points.empty:
+            first_bsp_point = filtered_points.iloc[0]  # Get the first point after entry_ts
+            exit_points.append({'price': first_bsp_point['h'], 'exit_reason': 'Max BSP Crossed', 'ts': first_bsp_point['ts']})
+
+    # If no exit condition is met, return the last row's price and timestamp
+    if not exit_points:
+        last_row = rows.iloc[-1]
+        return {'price': last_row['c'], 'exit_reason': None, 'ts': last_row['ts']}
+    
+    # Otherwise, return the exit point with the earliest timestamp
+    first_exit = min(exit_points, key=lambda x: x['ts'])
+    return first_exit
 
 def calculate_fixed_exit(entry_row, rows, fixed_profit, fixed_loss, use_stop_loss=False, use_fixed_profit=False,
                          use_max_bsp_exit=False, points_above_max=None):
     entry_ts, entry_h, entry_l, entry_c = entry_row[['ts', 'h', 'l', 'c']]
+    
+    # Calculate the target price for the fixed profit condition
+    target_price = entry_c * (1 + fixed_profit / 100)
+
+    exit_points = []
+
+    # Check for the first row where fixed profit condition is met
+    if use_fixed_profit:
+        fixed_profit_rows = rows[rows['h'] >= target_price]
+        if not fixed_profit_rows.empty:
+            first_fixed_profit_row = fixed_profit_rows.iloc[0]
+            exit_points.append({'price': first_fixed_profit_row['h'], 'exit_reason': 'Fixed Profit', 'ts': first_fixed_profit_row['ts']})
 
     stop_loss_price = entry_c * (1 - fixed_loss / 100)
 
-    for ts, h, l , c in rows: # Assuming prices is a 2D array with columns [ts, h, l, c]
-        # Check for fixed profit exit using the high price
-        if use_fixed_profit and h >= entry_c * (1 + fixed_profit / 100):
-            return {'price': h, 'exit_reason': 'Fixed Profit', 'ts': ts}
+    # Check for the first row where stop loss condition is met
+    if use_stop_loss:
+        stop_loss_rows = rows[rows['l'] <= stop_loss_price]
+        if not stop_loss_rows.empty:
+            first_stop_loss_row = stop_loss_rows.iloc[0]
+            exit_points.append({'price': stop_loss_price, 'exit_reason': 'Stop Loss', 'ts': first_stop_loss_row['ts']})
 
-        # Check for stop loss using the low price
-        if use_stop_loss and l <= stop_loss_price:
-            return {'price': stop_loss_price, 'exit_reason': 'Stop Loss', 'ts': ts}
+    # Check for Max BSP exit condition if enabled
+    if use_max_bsp_exit and points_above_max is not None:
+        # Filter for points where `above_max` is True and `ts` > entry_ts
+        filtered_points = points_above_max[(points_above_max['above_max'] == True) & (points_above_max['ts'] > entry_ts)]
 
-        # Check for Max BSP exit if enabled
-        if use_max_bsp_exit and points_above_max is not None:
-            # Assuming points_above_max contains timestamps or intervals to check
-            intervals = points_above_max.index
-            matches = intervals.contains(ts)
-            if matches.any():
-                # Exit at the first match
-                return {'price': points_above_max[matches].iloc[0], 'exit_reason': 'Max BSP Crossed', 'ts': ts}
+        if not filtered_points.empty:
+            first_bsp_point = filtered_points.iloc[0]  # Get the first point after entry_ts
+            exit_points.append({'price': first_bsp_point['h'], 'exit_reason': 'Max BSP Crossed', 'ts': first_bsp_point['ts']})
 
-    # If no exit condition is met
-    last_row_ts, last_row_h, last_row_l , last_row_c = rows[-1]
-    return {'price': last_row_c, 'exit_reason': None, 'ts': last_row_ts}
+    # If no exit condition is met, return the last row's price and timestamp
+    if not exit_points:
+        last_row = rows.iloc[-1]
+        return {'price': last_row['c'], 'exit_reason': None, 'ts': last_row['ts']}
+    
+    # Otherwise, return the exit point with the earliest timestamp
+    first_exit = min(exit_points, key=lambda x: x['ts'])
+    return first_exit
 
 # %%
 # Load data
@@ -124,11 +154,13 @@ else:
 print(f"Number of records after clean: {len(data_clean)}")
 
 # %%
+# data_clean = data_clean.iloc[:10_000]
+# %%
 # # Calculate bsp_avg
 # data_clean.loc[:, 'bsp_avg'] = data_clean.filter(like='ob_10_p_').mean(axis=1)
 
 # Set rolling window size
-X = 1000
+X = 2000
 
 # Calculate min_bsp, and max_bsp
 data_clean.loc[:, 'min_bsp'] = data_clean['ob_10_p_l'].rolling(window=X, min_periods=1).min()
@@ -143,6 +175,82 @@ points_below_min = data_clean[data_clean['below_min']]
 print(f"Number of points below min: {len(points_below_min)}")
 points_above_max = data_clean[data_clean['above_max']]
 print(f"Number of points above max: {len(points_above_max)}")
+
+# %%
+# # Create the first plot for min_bsp (using ob_10_p_l) with increased width
+# plt.figure(figsize=(24, 6))  # Increased width by 2-3x
+
+# # Plot the BSP Metric (ob_10_p_l) line
+# plt.plot(data_clean['ts'], data_clean['ob_10_p_l'], label="Metryka BSP (ob_10_p_l)", color="#4682B4")
+
+# # Plot the min_bsp line (dashed)
+# plt.plot(data_clean['ts'], data_clean['min_bsp'], label="Wartości minimum (min_bsp)", color="#DAA520", linestyle="--")
+
+# # Plot the points below min_bsp
+# plt.scatter(points_below_min['ts'], points_below_min['ob_10_p_l'], label="Punkty przecięcia", color="red", s=50)
+
+# # Add labels and title
+# plt.title("Punkty przecięcia metryki BSP z wartościami minimum")
+# plt.xlabel("Timestamp")
+# plt.ylabel("Wartość")
+# plt.legend(title="Legend", loc="lower center", bbox_to_anchor=(0.5, -0.05), shadow=True, fancybox=True)
+
+# # Show the plot
+# plt.tight_layout()
+# plt.show()
+
+# # Create the second plot for max_bsp (using ob_10_p_h) with increased width
+# plt.figure(figsize=(24, 6))  # Increased width by 2-3x
+
+# # Plot the BSP Metric (ob_10_p_h) line
+# plt.plot(data_clean['ts'], data_clean['ob_10_p_h'], label="Metryka BSP (ob_10_p_h)", color="#32CD32")
+
+# # Plot the max_bsp line (solid)
+# plt.plot(data_clean['ts'], data_clean['max_bsp'], label="Wartości maksimum (max_bsp)", color="#8A2BE2", linestyle="-")
+
+# # Plot the points above max_bsp
+# plt.scatter(points_above_max['ts'], points_above_max['ob_10_p_h'], label="Punkty przecięcia max", color="orange", s=50)
+
+# # Add labels and title
+# plt.title("Punkty przecięcia metryki BSP z wartościami maksimum")
+# plt.xlabel("Timestamp")
+# plt.ylabel("Wartość")
+# plt.legend(title="Legend", loc="lower center", bbox_to_anchor=(0.5, -0.05), shadow=True, fancybox=True)
+
+# # Show the plot
+# plt.tight_layout()
+# plt.show()
+
+# # Create the third plot for both min_bsp and max_bsp on the same chart with increased width
+# plt.figure(figsize=(24, 6))  # Increased width by 2-3x
+
+# # Plot the BSP Metric (ob_10_p_l) line
+# plt.plot(data_clean['ts'], data_clean['ob_10_p_l'], label="Metryka BSP (ob_10_p_l)", color="#4682B4")
+
+# # Plot the min_bsp line (dashed)
+# plt.plot(data_clean['ts'], data_clean['min_bsp'], label="Wartości minimum (min_bsp)", color="#DAA520", linestyle="--")
+
+# # Plot the points below min_bsp
+# plt.scatter(points_below_min['ts'], points_below_min['ob_10_p_l'], label="Punkty przecięcia min", color="red", s=50)
+
+# # Plot the BSP Metric (ob_10_p_h) line
+# plt.plot(data_clean['ts'], data_clean['ob_10_p_h'], label="Metryka BSP (ob_10_p_h)", color="#32CD32")
+
+# # Plot the max_bsp line (solid)
+# plt.plot(data_clean['ts'], data_clean['max_bsp'], label="Wartości maksimum (max_bsp)", color="#8A2BE2", linestyle="-")
+
+# # Plot the points above max_bsp
+# plt.scatter(points_above_max['ts'], points_above_max['ob_10_p_h'], label="Punkty przecięcia max", color="orange", s=50)
+
+# # Add labels and title
+# plt.title("Punkty przecięcia metryki BSP z wartościami minimum i maksimum")
+# plt.xlabel("Timestamp")
+# plt.ylabel("Wartość")
+# plt.legend(title="Legend", loc="lower center", bbox_to_anchor=(0.5, -0.05), shadow=True, fancybox=True)
+
+# # Show the plot
+# plt.tight_layout()
+# plt.show()
 
 # %%
 def filter_points(data, min_interval_gap):
@@ -182,7 +290,8 @@ def trade_simulation(
     use_trailing_stop_loss: bool = False,
     use_fixed_profit: bool = False,
     use_max_bsp_exit: bool = False,
-    points_above_max: Optional[pd.DataFrame] = None
+    points_above_max: Optional[pd.DataFrame] = None,
+    chart_title: str = 'Cumulative Results: TSL vs Fixed Strategy'
 ) -> pd.DataFrame:
     """
     Simulates trading based on provided conditions and parameters.
@@ -210,6 +319,7 @@ def trade_simulation(
     cumulative_all_result_fixed = 0
 
     # points_above_max_preprocessed = preprocess_points_above_max(points_above_max)
+    # data_after_entry = data_clean.loc[['ts', 'h', 'l', 'c']]
 
     for _, point in points_below_min.iterrows():
         print(f"Transaction: {point['ts']}")
@@ -244,7 +354,7 @@ def trade_simulation(
         price_change_percent = calculate_percentage_change(entry_price, past_price)
         
         # Get prices after entry
-        data_after_entry = data_clean.loc[data_clean['ts'] >= entry_ts, ['ts', 'h', 'l', 'c']].values
+        data_after_entry = data_clean.loc[data_clean['ts'] >= entry_ts, ['ts', 'h', 'l', 'c']]
         
         # Trailing stop-loss exit
         trail_exit = calculate_trailing_exit(point, data_after_entry, Y_trail_profit, Y_stop_loss, Y_trail_fixed_profit, use_trailing_stop_loss, use_stop_loss, use_fixed_profit,  use_max_bsp_exit, points_above_max)
@@ -284,41 +394,55 @@ def trade_simulation(
 
     # Plot cumulative results
     if show_chart:
+        # Assuming transactions is already a list or DataFrame containing the data
         transactions_df = pd.DataFrame(transactions)
+
+        # Create the figure
         plt.figure(figsize=(12, 6))
+
+        # Plot the different strategies
         plt.plot(transactions_df['entry_ts'], transactions_df['cumulative_in_trade_result_tsl'], label='TSL Strategy Traded', color='blue')
         plt.plot(transactions_df['entry_ts'], transactions_df['cumulative_in_trade_result_fixed'], label='Fixed Strategy Traded', color='red')
         plt.plot(transactions_df['entry_ts'], transactions_df['cumulative_all_result_tsl'], label='TSL Strategy All', color='blue', alpha=0.5)
         plt.plot(transactions_df['entry_ts'], transactions_df['cumulative_all_result_fixed'], label='Fixed Strategy All', color='red', alpha=0.5)
+
+        # Adding the final results as annotations (last value in each series)
+        final_tsl_traded = transactions_df['cumulative_in_trade_result_tsl'].iloc[-1]
+        final_fixed_traded = transactions_df['cumulative_in_trade_result_fixed'].iloc[-1]
+        final_tsl_all = transactions_df['cumulative_all_result_tsl'].iloc[-1]
+        final_fixed_all = transactions_df['cumulative_all_result_fixed'].iloc[-1]
+
+        # Annotate the last points with text
+        plt.text(transactions_df['entry_ts'].iloc[-1], final_tsl_traded, f'TSL Traded: {final_tsl_traded:.2f}%', color='blue', fontsize=10, ha='left')
+        plt.text(transactions_df['entry_ts'].iloc[-1], final_fixed_traded, f'Fixed Traded: {final_fixed_traded:.2f}%', color='red', fontsize=10, ha='left')
+        plt.text(transactions_df['entry_ts'].iloc[-1], final_tsl_all, f'TSL All: {final_tsl_all:.2f}%', color='blue', fontsize=10, ha='left', alpha=0.5)
+        plt.text(transactions_df['entry_ts'].iloc[-1], final_fixed_all, f'Fixed All: {final_fixed_all:.2f}%', color='red', fontsize=10, ha='left', alpha=0.5)
+
+        # Labels, title, and grid
         plt.xlabel('Timestamp')
         plt.ylabel('Cumulative Result (%)')
-        plt.title('Cumulative Results: TSL vs Fixed Strategy')
+        plt.title(chart_title)
         plt.legend()
         plt.grid()
+
+        # Show the plot
         plt.show()
 
     return pd.DataFrame(transactions)
 
 # %%
-# Trades without BSP max
-transactions_without_bsp_max = trade_simulation(points_below_min, data_clean, past_interval_percentage=120, past_percentage_min_dropdown=-2.5,
+# # Trades without BSP max
+# transactions_without_bsp_max = trade_simulation(points_below_min, data_clean, past_interval_percentage=120, past_percentage_min_dropdown=-2.5,
+#                                  Y_trail_profit=5, Y_stop_loss=10, Y_trail_fixed_profit=6, Y_fixed_profit=6, Y_fixed_loss=5, use_stop_loss = True,
+#                                  use_trailing_stop_loss = True, use_fixed_profit = True, use_max_bsp_exit = False, points_above_max=points_above_max)
+
+# transactions_without_bsp_max.to_json("transactions_without_bsp_max.json", orient='records', indent=4)
+
+
+# # %%
+# Trades with BSP max
+transactions_with_bsp_max = trade_simulation(points_below_min, data_clean, past_interval_percentage=120, past_percentage_min_dropdown=-2.5,
                                  Y_trail_profit=5, Y_stop_loss=10, Y_trail_fixed_profit=6, Y_fixed_profit=6, Y_fixed_loss=5, use_stop_loss = True,
-                                 use_trailing_stop_loss = True, use_fixed_profit = True, use_max_bsp_exit = False, points_above_max=points_above_max)
+                                 use_trailing_stop_loss = False, use_fixed_profit = False, use_max_bsp_exit = True, points_above_max=points_above_max, chart_title='SL=False TSL=False TP=False BSP=True')
 
-# %%
-transactions_without_bsp_max.to_json("transactions_without_bsp_max.json", orient='records', indent=4)
-print(transactions_without_bsp_max.tail(1)[['cumulative_in_trade_result_tsl', 'cumulative_in_trade_result_fixed', 'cumulative_all_result_tsl', 'cumulative_all_result_fixed']])
-
-
-# # %%
-# # Trades with BSP max
-# transactions_with_bsp_max = trade_simulation(points_below_min.iloc[:1], data_clean, past_interval_percentage=120, past_percentage_min_dropdown=-2.5,
-#                                  Y_trail_profit=5, Y_stop_loss=10, Y_trail_fixed_profit=6, Y_fixed_profit=6, Y_fixed_loss=5, use_stop_loss = False,
-#                                  use_trailing_stop_loss = False, use_fixed_profit = False, use_max_bsp_exit = True, points_above_max=points_above_max)
-
-# # %%
-# transactions_with_bsp_max.to_json("transactions_with_bsp_max.json", orient='records', indent=4)
-# print(transactions_with_bsp_max.tail(1)[['cumulative_in_trade_result_tsl', 'cumulative_in_trade_result_fixed', 'cumulative_all_result_tsl', 'cumulative_all_result_fixed']])
-
-# # %%
-# %%
+transactions_with_bsp_max.to_json("transactions_with_bsp_max.json", orient='records', indent=4)

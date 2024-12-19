@@ -2,8 +2,8 @@ import time
 import matplotlib.pyplot as plt
 from typing import TypedDict, Optional
 import pandas as pd
-from helpers import get_interval_coefficient, calculate_percentage_change, filter_min_interval_gap, addMinMaxBSP
-from strategies import calculate_trailing_exit, calculate_fixed_exit
+from .helpers import get_interval_coefficient, calculate_percentage_change, filter_min_interval_gap, addMinMaxBSP
+from .strategies import calculate_trailing_exit, calculate_fixed_exit
 
 def compute_trades(
     interval: str,

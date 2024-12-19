@@ -21,7 +21,7 @@ trade_simulation(
         "fixed_take_profit": 6,
         "fixed_stop_loss": 5,
         "use_avg_price": False,
-        "show_chart": False,
+        "show_chart": True,
         "use_points_above_max": False,
         "chart_title": None
     }

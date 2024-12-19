@@ -140,6 +140,35 @@ def compute_trades(
 
     return pd.DataFrame(transactions)
 
+def produce_default_statistic(trades: pd.DataFrame):
+    # Add win condition columns for TSL and fixed trades
+    trades['is_win_tsl'] = trades['result_tsl'] > 0
+    trades['is_win_fixed'] = trades['result_fixed'] > 0
+    
+    # Compute win ratios efficiently
+    win_ratios = {
+        'all': trades[['is_win_tsl', 'is_win_fixed']].any(axis=1).mean() if not trades.empty else 0.0,
+        'tsl': trades['is_win_tsl'].mean() if trades['is_win_tsl'].any() else 0.0,
+        'fixed': trades['is_win_fixed'].mean() if trades['is_win_fixed'].any() else 0.0,
+    }
+    
+    # Compute basic statistics, handle cases where no winning trades exist
+    stats = {
+        'all_trades': trades[['result_tsl', 'result_fixed']].describe(),
+        'winning_tsl': trades.loc[trades['is_win_tsl'], ['result_tsl']].describe() if trades['is_win_tsl'].any() else "No winning TSL trades",
+        'winning_fixed': trades.loc[trades['is_win_fixed'], ['result_fixed']].describe() if trades['is_win_fixed'].any() else "No winning Fixed-Stop trades",
+    }
+    
+    # Print results
+    print(f"Win Ratios: {win_ratios}")
+    print("\nStatistics for All Trades:")
+    print(stats['all_trades'])
+    print("\nStatistics for Winning TSL Trades:")
+    print(stats['winning_tsl'])
+    print("\nStatistics for Winning Fixed-Stop Trades:")
+    print(stats['winning_fixed'])
+    print()
+
 class TradeOptions(TypedDict):
     past_interval_percentage: int
     past_percentage_min_dropdown: float
@@ -153,7 +182,7 @@ class TradeOptions(TypedDict):
     use_points_above_max: Optional[bool]
     chart_title: Optional[str]
 
-def trade_simulation(interval: str, ticker: str, filter_min_interval_gap_to_skip: int, back_interval_amount_for_bsp: int, trade_options: TradeOptions):
+def trade_simulation(interval: str, ticker: str, filter_min_interval_gap_to_skip: int, back_interval_amount_for_bsp: int, trade_options: TradeOptions, cut_potential_trades=None):
     data = pd.read_json(f"../data/data-crypto-{ticker}-{interval}.json")
     
     # Handle missing values
@@ -181,9 +210,14 @@ def trade_simulation(interval: str, ticker: str, filter_min_interval_gap_to_skip
     use_points_above_max = trade_options.get('use_points_above_max') or False 
     chart_title = trade_options.get('chart_title') or ''
     points_above_max=points_above_max if use_points_above_max else None
+    
+    if cut_potential_trades is not None:
+        points_below_min=points_below_min.loc[:cut_potential_trades]
 	
-    transactions_without_bsp_max = compute_trades(interval, points_below_min, data_clean, past_interval_percentage, past_percentage_min_dropdown,
+    trades = compute_trades(interval, points_below_min, data_clean, past_interval_percentage, past_percentage_min_dropdown,
                                                   tsl_trailing_stop_loss, tsl_stop_loss, tsl_take_profit, fixed_take_profit, fixed_stop_loss,
                                                   use_avg_price, show_chart, points_above_max, chart_title)
+    produce_default_statistic(trades)
+    # print(trades)
     elapsed_time = time.time() - start_time
     print(f"Time taken for transactions: {elapsed_time:.2f} seconds")

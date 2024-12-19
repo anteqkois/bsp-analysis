@@ -12,9 +12,11 @@ trade_simulation(
     ticker='TAOUSDT',
     back_interval_amount_for_bsp=1000,
     filter_min_interval_gap_to_skip=2,
+    # cut_potential_trades=1000,
+    file_name='base',
     trade_options={
         "past_interval_percentage": 120,
-        "past_percentage_min_dropdown": 2.5,
+        "past_percentage_min_dropdown": -2.5,
         "tsl_trailing_stop_loss": 5,
         "tsl_stop_loss": 10,
         "tsl_take_profit": 6,

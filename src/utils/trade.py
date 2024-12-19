@@ -33,7 +33,6 @@ def compute_trades(
         # if index % 500 == 0: # type: ignore
         #     print(f"Transaction: {point['ts']}, {index}")
         entry_ts = point['ts']
-        # Initialize variables to avoid unbound issues
         transaction_status = None
         price_change_percent = None
         exit_trail_price = None
@@ -145,11 +144,10 @@ def produce_default_statistic(trades: pd.DataFrame):
     trades['is_win_tsl'] = trades['result_tsl'] > 0
     trades['is_win_fixed'] = trades['result_fixed'] > 0
     
-    # Compute win ratios efficiently
     win_ratios = {
-        'all': trades[['is_win_tsl', 'is_win_fixed']].any(axis=1).mean() if not trades.empty else 0.0,
-        'tsl': trades['is_win_tsl'].mean() if trades['is_win_tsl'].any() else 0.0,
-        'fixed': trades['is_win_fixed'].mean() if trades['is_win_fixed'].any() else 0.0,
+        'all': round(trades[['is_win_tsl', 'is_win_fixed']].any(axis=1).mean(), 4) if not trades.empty else 0.0,
+        'tsl': round(trades['is_win_tsl'].mean(), 4) if not trades.empty else 0.0,
+        'fixed': round(trades['is_win_fixed'].mean(), 4) if not trades.empty else 0.0,
     }
     
     # Compute basic statistics, handle cases where no winning trades exist
@@ -182,7 +180,7 @@ class TradeOptions(TypedDict):
     use_points_above_max: Optional[bool]
     chart_title: Optional[str]
 
-def trade_simulation(interval: str, ticker: str, filter_min_interval_gap_to_skip: int, back_interval_amount_for_bsp: int, trade_options: TradeOptions, cut_potential_trades=None):
+def trade_simulation(interval: str, ticker: str, filter_min_interval_gap_to_skip: int, back_interval_amount_for_bsp: int, trade_options: TradeOptions, cut_potential_trades=None, file_name=None, print_trades=False):
     data = pd.read_json(f"../data/data-crypto-{ticker}-{interval}.json")
     
     # Handle missing values
@@ -218,6 +216,9 @@ def trade_simulation(interval: str, ticker: str, filter_min_interval_gap_to_skip
                                                   tsl_trailing_stop_loss, tsl_stop_loss, tsl_take_profit, fixed_take_profit, fixed_stop_loss,
                                                   use_avg_price, show_chart, points_above_max, chart_title)
     produce_default_statistic(trades)
-    # print(trades)
+    if print_trades:
+        print(trades)
     elapsed_time = time.time() - start_time
     print(f"Time taken for transactions: {elapsed_time:.2f} seconds")
+    if file_name:
+        trades.to_json(f"{file_name}.json", orient='records', indent=4)

@@ -13,7 +13,7 @@ trade_simulation(
     back_interval_amount_for_bsp=1000,
     filter_min_interval_gap_to_skip=2,
     # cut_potential_trades=1000,
-    file_name='base',
+    file_name='trades/trades_base',
     trade_options={
         "past_interval_percentage": 120,
         "past_percentage_min_dropdown": -2.5,

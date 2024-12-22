@@ -34,7 +34,7 @@ def compute_trades(
         # if index % 500 == 0: # type: ignore
         #     print(f"Transaction: {point['ts']}, {index}")
         ts = point['ts']
-        transaction_status = None
+        status = None
         price_change_percent = None
         tsl_exit_price = None
         tsl_percentage_result = None
@@ -47,7 +47,7 @@ def compute_trades(
         entry_price = (point['l'] + point['h']) / 2 if use_avg_price else point['c']
 
         if pd.notna(point['filter']):
-            transaction_status = point['filter']
+            status = point['filter']
         # Check optional condition for past percentage drop
         elif past_interval_percentage != 0 and past_percentage_min_dropdown != 0:
             past_ts = ts - past_interval_percentage * get_interval_coefficient(interval)
@@ -57,7 +57,7 @@ def compute_trades(
             if max_past_price is not None:
                 drop_percent = calculate_percentage_change(entry_price, max_past_price)
                 if drop_percent > past_percentage_min_dropdown:
-                    transaction_status = "Price drop not enough"
+                    status = "Price drop not enough"
 
         # Calculate price change percentage
         past_ts = ts - past_interval_percentage * get_interval_coefficient(interval)
@@ -81,8 +81,8 @@ def compute_trades(
         fixed_percentage_result = calculate_percentage_change(fixed_exit_price, entry_price) if fixed_exit_price else -fixed_stop_loss
         
         # Update cumulative results
-        cumulative_in_trade_tsl_percentage_result += tsl_percentage_result if transaction_status is None else 0
-        cumulative_in_trade_fixed_percentage_result += fixed_percentage_result if transaction_status is None else 0
+        cumulative_in_trade_tsl_percentage_result += tsl_percentage_result if status is None else 0
+        cumulative_in_trade_fixed_percentage_result += fixed_percentage_result if status is None else 0
         cumulative_all_tsl_percentage_result += tsl_percentage_result
         cumulative_all_fixed_percentage_result += fixed_percentage_result
 
@@ -103,7 +103,7 @@ def compute_trades(
             'cumulative_in_trade_fixed_percentage_result': cumulative_in_trade_fixed_percentage_result,
             'cumulative_all_tsl_percentage_result': cumulative_all_tsl_percentage_result,
             'cumulative_all_fixed_percentage_result': cumulative_all_fixed_percentage_result,
-            'transaction_status': transaction_status or "Trade"
+            'status': status or "Trade"
         })
 
     trades_df = pd.DataFrame(transactions)
@@ -113,10 +113,10 @@ def compute_trades(
     final_fixed_all = trades_df['cumulative_all_fixed_percentage_result'].iloc[-1]
     
     # Calculate trade counts
-    tsl_trade_count_closed = trades_df[(trades_df['tsl_exit_reason'].notnull()) & (trades_df['transaction_status'] == "Trade")].shape[0]
-    fixed_trade_count_closed = trades_df[(trades_df['fixed_exit_reason'].notnull()) & (trades_df['transaction_status'] == "Trade")].shape[0]
-    tsl_trade_count_active = trades_df[(trades_df['tsl_exit_reason'].isnull()) & (trades_df['transaction_status'] == "Trade")].shape[0]
-    fixed_trade_count_active = trades_df[(trades_df['fixed_exit_reason'].isnull()) & (trades_df['transaction_status'] == "Trade")].shape[0]
+    tsl_trade_count_closed = trades_df[(trades_df['tsl_exit_reason'].notnull()) & (trades_df['status'] == "Trade")].shape[0]
+    fixed_trade_count_closed = trades_df[(trades_df['fixed_exit_reason'].notnull()) & (trades_df['status'] == "Trade")].shape[0]
+    tsl_trade_count_active = trades_df[(trades_df['tsl_exit_reason'].isnull()) & (trades_df['status'] == "Trade")].shape[0]
+    fixed_trade_count_active = trades_df[(trades_df['fixed_exit_reason'].isnull()) & (trades_df['status'] == "Trade")].shape[0]
     
     # For 'all' counts, you can simply use the total number of rows
     all_tsl_count_closed = trades_df[trades_df['tsl_exit_reason'].notnull()].shape[0]
@@ -177,14 +177,14 @@ def compute_trades(
 
     return trades_df, trades_stats
 
-class TradeOptions(TypedDict):
-    past_interval_percentage: int
-    past_percentage_min_dropdown: float
+class TradeOptions(TypedDict, total=False):
     tsl_trailing_stop_loss: float
     tsl_stop_loss: float
     tsl_take_profit: float
     fixed_take_profit: float
     fixed_stop_loss: float
+    past_interval_percentage: Optional[int]
+    past_percentage_min_dropdown: Optional[float]
     use_avg_price: Optional[bool]
     show_chart: Optional[bool]
     use_points_above_max: Optional[bool]
@@ -216,13 +216,13 @@ def trade_simulation(interval: str, ticker: str, back_interval_amount_for_bsp: i
     
     start_time = time.time()
 
-    past_interval_percentage = trade_options.get('past_interval_percentage')
-    past_percentage_min_dropdown = trade_options.get('past_percentage_min_dropdown') 
-    tsl_trailing_stop_loss = trade_options.get('tsl_trailing_stop_loss') 
-    tsl_stop_loss = trade_options.get('tsl_stop_loss') 
-    tsl_take_profit = trade_options.get('tsl_take_profit') 
-    fixed_take_profit = trade_options.get('fixed_take_profit') 
-    fixed_stop_loss = trade_options.get('fixed_stop_loss') 
+    past_interval_percentage = trade_options.get('past_interval_percentage') or 0
+    past_percentage_min_dropdown = trade_options.get('past_percentage_min_dropdown')  or 0
+    tsl_trailing_stop_loss = trade_options.get('tsl_trailing_stop_loss') or 3
+    tsl_stop_loss = trade_options.get('tsl_stop_loss') or 5
+    tsl_take_profit = trade_options.get('tsl_take_profit') or 0
+    fixed_take_profit = trade_options.get('fixed_take_profit')  or 10
+    fixed_stop_loss = trade_options.get('fixed_stop_loss') or 5
     use_avg_price = trade_options.get('use_avg_price') or False
     show_chart = trade_options.get('show_chart') or False
     use_points_above_max = trade_options.get('use_points_above_max') or False 
@@ -238,6 +238,7 @@ def trade_simulation(interval: str, ticker: str, back_interval_amount_for_bsp: i
     trades, trades_stats = compute_trades(interval, long_entries, data_clean, past_interval_percentage, past_percentage_min_dropdown,
                                                   tsl_trailing_stop_loss, tsl_stop_loss, tsl_take_profit, fixed_take_profit, fixed_stop_loss,
                                                   use_avg_price, show_chart, points_above_max, chart_title)
+
     win_ratios, statistic = produce_default_statistic(trades, verbose=show_statistic)
     details={}
     details['win_ratios'] = win_ratios

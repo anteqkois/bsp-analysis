@@ -113,22 +113,30 @@ def compute_trades(
     final_fixed_all = trades_df['cumulative_all_fixed_percentage_result'].iloc[-1]
     
     # Calculate trade counts
-    tsl_trade_count = trades_df[(trades_df['tsl_exit_reason'].notnull()) & (trades_df['transaction_status'] == "Trade")].shape[0]
-    fixed_trade_count = trades_df[(trades_df['fixed_exit_reason'].notnull()) & (trades_df['transaction_status'] == "Trade")].shape[0]
+    tsl_trade_count_closed = trades_df[(trades_df['tsl_exit_reason'].notnull()) & (trades_df['transaction_status'] == "Trade")].shape[0]
+    fixed_trade_count_closed = trades_df[(trades_df['fixed_exit_reason'].notnull()) & (trades_df['transaction_status'] == "Trade")].shape[0]
+    tsl_trade_count_active = trades_df[(trades_df['tsl_exit_reason'].isnull()) & (trades_df['transaction_status'] == "Trade")].shape[0]
+    fixed_trade_count_active = trades_df[(trades_df['fixed_exit_reason'].isnull()) & (trades_df['transaction_status'] == "Trade")].shape[0]
     
     # For 'all' counts, you can simply use the total number of rows
-    all_tsl_count = trades_df[trades_df['tsl_exit_reason'].notnull()].shape[0]
-    all_fixed_count = trades_df[trades_df['fixed_exit_reason'].notnull()].shape[0]
+    all_tsl_count_closed = trades_df[trades_df['tsl_exit_reason'].notnull()].shape[0]
+    all_fixed_count_closed = trades_df[trades_df['fixed_exit_reason'].notnull()].shape[0]
+    all_tsl_count_active = trades_df[trades_df['tsl_exit_reason'].isnull()].shape[0]
+    all_fixed_count_active = trades_df[trades_df['fixed_exit_reason'].isnull()].shape[0]
     
     trades_stats={
         "final_tsl_traded":final_tsl_traded,
         "final_fixed_traded":final_fixed_traded,
         "final_tsl_all":final_tsl_all,
         "final_fixed_all":final_fixed_all,
-        "tsl_trade_count":tsl_trade_count,
-        "fixed_trade_count":fixed_trade_count,
-        "all_tsl_count":all_tsl_count,
-        "all_fixed_count":all_fixed_count,
+        "tsl_trade_count":tsl_trade_count_closed,
+        "fixed_trade_count":fixed_trade_count_closed,
+        "tsl_trade_count_active":tsl_trade_count_active,
+        "fixed_trade_count_active":fixed_trade_count_active,
+        "all_tsl_count":all_tsl_count_closed,
+        "all_fixed_count":all_fixed_count_closed,
+        "all_tsl_count_active":all_tsl_count_active,
+        "all_fixed_count_active":all_fixed_count_active
     }   
 
     if show_chart:
@@ -151,10 +159,10 @@ def compute_trades(
         plt.plot(data_clean['ts'], data_clean['hodl_percentage_change'], label='HODL Percentage Change', color='green', linestyle='--', linewidth=1)
 
         # Annotate the last points with text
-        plt.figtext(0.5, -0.05, f'TSL Traded: {final_tsl_traded:.2f}% ; count: {tsl_trade_count}', ha='center', va='top', fontsize=10, color='red')
-        plt.figtext(0.5, -0.1, f'Fixed Traded: {final_fixed_traded:.2f}% ; count: {fixed_trade_count}', ha='center', va='top', fontsize=10, color='blue')
-        plt.figtext(0.5, -0.15, f'TSL All: {final_tsl_all:.2f}% ; count: {all_tsl_count}', ha='center', va='top', fontsize=10, color='red', alpha=0.5)
-        plt.figtext(0.5, -0.2, f'Fixed All: {final_fixed_all:.2f}% ; count: {all_fixed_count}', ha='center', va='top', fontsize=10, color='blue', alpha=0.5)
+        plt.figtext(0.5, -0.05, f'TSL Traded: {final_tsl_traded:.2f}% ; closed: {tsl_trade_count_closed}; active: {tsl_trade_count_active}', ha='center', va='top', fontsize=10, color='red')
+        plt.figtext(0.5, -0.1, f'TSL All: {final_tsl_all:.2f}% ; closed: {all_tsl_count_closed}; active: {all_tsl_count_active}', ha='center', va='top', fontsize=10, color='red', alpha=0.5)
+        plt.figtext(0.5, -0.15, f'Fixed Traded: {final_fixed_traded:.2f}% ; closed: {fixed_trade_count_closed}; active: {fixed_trade_count_active}', ha='center', va='top', fontsize=10, color='blue')
+        plt.figtext(0.5, -0.2, f'Fixed All: {final_fixed_all:.2f}% ; closed: {all_fixed_count_closed}; active: {all_fixed_count_active}', ha='center', va='top', fontsize=10, color='blue', alpha=0.5)
         plt.figtext(0.5, -0.25, f'HODL: {data_clean["hodl_percentage_change"].iloc[-1]:.2f}%', ha='center', va='top', fontsize=10, color='green')
 
         # Labels, title, and grid

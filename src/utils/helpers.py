@@ -1,3 +1,4 @@
+import json
 import numpy as np
 import pandas as pd
 
@@ -32,33 +33,190 @@ def get_interval_coefficient(interval):
 def calculate_percentage_change(current_price, past_price):
     return (current_price - past_price) / past_price * 100
 
-def addMinMaxBSP(data: pd.DataFrame, back_interval_amount: int):
-    # Calculate min_bsp, and max_bsp
+def filter_min_bsp(data: pd.DataFrame, back_interval_amount: int):
+    # Calculate min_bsp
     data.loc[:, 'min_bsp'] = data['ob_10_p_l'].rolling(window=back_interval_amount, min_periods=1).min()
-    data.loc[:, 'max_bsp'] = data['ob_10_p_h'].rolling(window=back_interval_amount, min_periods=1).max()
 
     # Detect points below min_bsp, and above max_bsp
     data.loc[:, 'below_min'] = data['ob_10_p_l'] <= data['min_bsp']
-    data.loc[:, 'above_max'] = data['ob_10_p_h'] >= data['max_bsp']
 
     # Extract points below min_bsp and points above max
     points_below_min = data[data['below_min']]
     print(f"Number of points below min: {len(points_below_min)}")
+    
+    return data, points_below_min
+
+def filter_max_bsp(data: pd.DataFrame, back_interval_amount: int):
+    data.loc[:, 'max_bsp'] = data['ob_10_p_h'].rolling(window=back_interval_amount, min_periods=1).max()
+    data.loc[:, 'above_max'] = data['ob_10_p_h'] >= data['max_bsp']
+
+    # Extract points below min_bsp and points above max
     points_above_max = data[data['above_max']]
     print(f"Number of points above max: {len(points_above_max)}")
     
-    return data, points_below_min, points_above_max
+    return data, points_above_max
 
 def filter_min_interval_gap(data, min_interval_gap: int, interval: str):
+    print(f"#filter_min_interval_gap before gap:{min_interval_gap} length:{len(data)}")
     data = data.copy()
 
-    data.loc[:, 'intervalGapFilter'] = False
-    last_valid_time = -np.inf
+    last_valid_time = -np.inf  # Last timestamp where `below_min == True`
+    is_below_min_streak = False  # Track whether we're in a streak of `below_min == True`
 
     for idx, row in data.iterrows():
-        if row['below_min']:
-            if (row['ts'] - last_valid_time) >= min_interval_gap * get_interval_coefficient(interval):
-                data.at[idx, 'intervalGapFilter'] = True
-                last_valid_time = row['ts']
+        # Default to assigning "Filter Interval Gap"
+        if pd.isna(data.loc[idx, 'filter']):
+            data.loc[idx, 'filter'] = "Filter Interval Gap"
 
+        if row['below_min']:
+            is_below_min_streak = True  # We're in a streak of `below_min == True`
+            last_valid_time = row['ts']  # Update last valid timestamp when `below_min` is True
+        elif is_below_min_streak:
+            # Transition from `below_min == True` to `below_min == False`
+            gap = row['ts'] - last_valid_time  # Calculate the gap between current time and the last valid `True`
+            if gap >= min_interval_gap * get_interval_coefficient(interval):
+                # If the gap exceeds `min_interval_gap`, stop filtering at this point
+                data.loc[idx, 'filter'] = None
+            # Reset streak
+            is_below_min_streak = False
+    
+    print(f"#filter_min_interval_gap after gap:{min_interval_gap} length:{len(data)}")
     return data
+
+# def filter_min_interval_gap(data, min_interval_gap: int, interval: str):
+#     print(f"#filter_min_interval_gap before gap:{min_interval_gap} length:{len(data)}")
+#     data = data.copy()
+
+#     last_valid_time = -np.inf  # Last timestamp when `below_min == True`
+#     strike_count = 0  # Track the number of strikes
+#     is_below_min_streak = False  # Track if we're in a streak of `below_min == True`
+
+#     for idx, row in data.iterrows():
+#         # Default to assigning "Filter Interval Gap" only if `filter` is None
+#         if pd.isna(data.loc[idx, 'filter']):
+#             data.loc[idx, 'filter'] = "Filter Below Min Strikes"
+        
+#         if row['below_min']:
+#             # We're in a streak of `below_min == True`
+#             is_below_min_streak = True
+#             strike_count += 1
+#             last_valid_time = row['ts']  # Update last valid timestamp when `below_min` is True
+#         elif is_below_min_streak:
+#             # We transition from `below_min == True` to `below_min == False`
+#             gap = row['ts'] - last_valid_time  # Calculate the gap between current time and last valid `True`
+            
+#             if gap >= min_interval_gap * get_interval_coefficient(interval):
+#                 # If the gap exceeds `min_interval_gap`, mark the current timestamp and all intermediate gaps as None
+#                 # Set `filter` to None for this and all subsequent rows in the gap
+#                 for i in range(idx - strike_count, idx):
+#                     data.loc[i, 'filter'] = None
+#                 strike_count = 0  # Reset strike count
+#             # Reset streak
+#             is_below_min_streak = False
+
+#     print(f"#filter_min_interval_gap after gap:{min_interval_gap} length:{len(data)}")
+#     return data
+
+# def filter_below_min_strikes(all_data, filtered_data):
+#     print(f"#filter_below_min_strikes before; length:{len(all_data)}")
+#     all_data = all_data.copy()
+
+#     is_below_min_streak = False  # Track whether we're in a streak of `below_min == True`
+
+#     for idx, row in all_data.iterrows():
+#         ts = row['ts']
+#         if pd.isna(all_data.loc[idx, 'filter']):
+#             all_data.loc[idx, 'filter'] = "Filter Below Min Strikes"
+#             # Also update 'filtered_data' with the same timestamp
+#             filtered_data.loc[filtered_data['ts'] == ts, 'filter'] = "Filter Below Min Strikes"
+
+#         if row['below_min']:
+#             is_below_min_streak = True  # We're in a streak
+#         elif is_below_min_streak:
+#             # Transition from `below_min == True` to `below_min == False`
+#             is_below_min_streak = False  # End the streak
+#             # Reverse logic: remove the filter only at transition points
+#             all_data.loc[idx, 'filter'] = None
+#             filtered_data.loc[filtered_data['ts'] == ts, 'filter'] = None  # Also update filtered_data
+    
+#     filtered_data = all_data[all_data['filter'].isna()] 
+#     print(f"#filter_below_min_strikes after; length:{len(filtered_data)}")
+#     return all_data, filtered_data
+
+def long_signal_min_bsp(all_data):
+    all_data.loc[all_data['below_min'], 'long_signal'] = True
+    all_data.loc[~all_data['below_min'], 'long_signal'] = False
+
+
+    print(f"#long_signal_min_bsp length:{len(all_data['long_signal'])}")
+    return all_data
+
+def long_signal_below_min_strikes(all_data):
+    all_data = all_data.copy()
+
+    # Track the streak of below_min == True
+    is_below_min_streak = False
+
+    # Store the timestamps (ts) where the filter should be applied
+    filter_update_ts = []
+
+    for idx, row in all_data.iterrows():
+        ts = row['ts']
+
+        # If below_min is True, mark the filter for all subsequent rows in the streak
+        if row['below_min']:
+            is_below_min_streak = True
+        elif is_below_min_streak:
+            # When below_min changes to False, mark the transition point and break the streak
+            is_below_min_streak = False
+            filter_update_ts.append(ts)  # Mark the transition point for filter reset
+
+    # filter_update_ts = [np.int64(x) for x in filter_update_ts]
+    # Apply "Filter Below Min Strikes" where needed by matching 'ts'
+    # all_data.loc[all_data['ts'].isin(filter_update_ts), 'filter'] = None
+    all_data.loc[all_data['ts'].isin(filter_update_ts), 'long_signal'] = True
+    all_data.loc[~all_data['ts'].isin(filter_update_ts), 'long_signal'] = False
+
+    print(f"#long_signal_below_min_strikes length:{len(all_data['long_signal'])}")
+    return all_data
+
+def produce_default_statistic(trades: pd.DataFrame, verbose=False):
+    # Add win condition columns for TSL and fixed trades
+    trades['is_win_tsl'] = trades['tsl_percentage_result'] > 0
+    trades['is_win_fixed'] = trades['fixed_percentage_result'] > 0
+    
+    win_ratios = {
+        'all': round(trades[['is_win_tsl', 'is_win_fixed']].any(axis=1).mean(), 4) if not trades.empty else 0.0,
+        'tsl': round(trades['is_win_tsl'].mean(), 4) if not trades.empty else 0.0,
+        'fixed': round(trades['is_win_fixed'].mean(), 4) if not trades.empty else 0.0,
+    }
+    
+    # Compute basic statistics, handle cases where no winning trades exist
+    stats = {
+        'all_trades': trades[['tsl_percentage_result', 'fixed_percentage_result']].describe(),
+        'winning_tsl': trades.loc[trades['is_win_tsl'], ['tsl_percentage_result']].describe() if trades['is_win_tsl'].any() else "No winning TSL trades",
+        'winning_fixed': trades.loc[trades['is_win_fixed'], ['fixed_percentage_result']].describe() if trades['is_win_fixed'].any() else "No winning Fixed-Stop trades",
+    }
+    
+    if verbose:
+        print_win_ratios(win_ratios)
+        print("\nStatistics for All Trades:")
+        print(stats['all_trades'])
+        print("\nStatistics for Winning TSL Trades:")
+        print(stats['winning_tsl'])
+        print("\nStatistics for Winning Fixed-Stop Trades:")
+        print(stats['winning_fixed'])
+        print()
+        
+    statistic={
+        'all_trades': stats['all_trades'].to_dict(),
+        'winning_tsl': {} if isinstance(stats['winning_tsl'], str) else stats['winning_tsl'].to_dict(),
+        'winning_fixed': {} if isinstance(stats['winning_fixed'], str) else stats['winning_fixed'].to_dict(),
+    }
+
+    return win_ratios, statistic
+
+def print_win_ratios(win_ratios):
+    print("Win Ratios:")
+    for key, value in win_ratios.items():
+        print(f"{key}: {value:.4f}")

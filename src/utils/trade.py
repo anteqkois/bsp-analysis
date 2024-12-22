@@ -1,8 +1,9 @@
 import time
+import json
 import matplotlib.pyplot as plt
 from typing import TypedDict, Optional
 import pandas as pd
-from .helpers import get_interval_coefficient, calculate_percentage_change, filter_min_interval_gap, addMinMaxBSP
+from .helpers import get_interval_coefficient, calculate_percentage_change, filter_min_interval_gap, filter_max_bsp, long_signal_below_min_strikes, filter_min_bsp, produce_default_statistic, long_signal_min_bsp
 from .strategies import calculate_trailing_exit, calculate_fixed_exit
 
 def compute_trades(
@@ -20,35 +21,37 @@ def compute_trades(
     show_chart: bool = True,
     points_above_max: Optional[pd.DataFrame] = None,
     chart_title: str = 'Cumulative Results: TSL vs Fixed Strategy'
-) -> pd.DataFrame:
+    ):
     transactions = []
-    cumulative_in_trade_result_tsl = 0
-    cumulative_in_trade_result_fixed = 0
-    cumulative_all_result_tsl = 0
-    cumulative_all_result_fixed = 0
+    cumulative_in_trade_tsl_percentage_result = 0
+    cumulative_in_trade_fixed_percentage_result = 0
+    cumulative_all_tsl_percentage_result = 0
+    cumulative_all_fixed_percentage_result = 0
 
     data_after_entry = data_clean[['ts', 'h', 'l', 'c']]
 
     for index, point in points_below_min.iterrows():
         # if index % 500 == 0: # type: ignore
         #     print(f"Transaction: {point['ts']}, {index}")
-        entry_ts = point['ts']
+        ts = point['ts']
         transaction_status = None
         price_change_percent = None
-        exit_trail_price = None
-        result_tsl = None
+        tsl_exit_price = None
+        tsl_percentage_result = None
         tsl_exit_reason = None
-        exit_fixed_price = None
-        result_fixed = None
+        fixed_exit_price = None
+        fixed_percentage_result = None
         fixed_exit_reason = None
 
         # Determine entry price
         entry_price = (point['l'] + point['h']) / 2 if use_avg_price else point['c']
 
+        if pd.notna(point['filter']):
+            transaction_status = point['filter']
         # Check optional condition for past percentage drop
-        if past_interval_percentage != 0 and past_percentage_min_dropdown != 0:
-            past_ts = entry_ts - past_interval_percentage * get_interval_coefficient(interval)
-            past_prices = data_clean.loc[(data_clean['ts'] >= past_ts) & (data_clean['ts'] < entry_ts), 'h']
+        elif past_interval_percentage != 0 and past_percentage_min_dropdown != 0:
+            past_ts = ts - past_interval_percentage * get_interval_coefficient(interval)
+            past_prices = data_clean.loc[(data_clean['ts'] >= past_ts) & (data_clean['ts'] < ts), 'h']
             max_past_price = past_prices.max() if not past_prices.empty else None # type: ignore
 
             if max_past_price is not None:
@@ -57,75 +60,102 @@ def compute_trades(
                     transaction_status = "Price drop not enough"
 
         # Calculate price change percentage
-        past_ts = entry_ts - past_interval_percentage * get_interval_coefficient(interval)
+        past_ts = ts - past_interval_percentage * get_interval_coefficient(interval)
         past_price = data_clean.loc[(data_clean['ts'] - past_ts).abs().idxmin(), 'l']
         price_change_percent = calculate_percentage_change(entry_price, past_price)
         
         # Get prices after entry
-        # data_after_entry = data_clean.loc[data_clean['ts'] >= entry_ts, ['ts', 'h', 'l', 'c']]
-        data_after_entry = data_after_entry.loc[data_clean['ts'] >= entry_ts]
+        # data_after_entry = data_clean.loc[data_clean['ts'] >= ts, ['ts', 'h', 'l', 'c']]
+        data_after_entry = data_after_entry.loc[data_clean['ts'] >= ts]
         
         # Trailing stop-loss exit
         trail_exit = calculate_trailing_exit(point, data_after_entry, tsl_trailing_stop_loss, tsl_stop_loss, tsl_take_profit, points_above_max)
-        exit_trail_price = trail_exit['price'] if 'price' in trail_exit else None
+        tsl_exit_price = trail_exit['price'] if 'price' in trail_exit else None
         tsl_exit_reason = trail_exit['exit_reason']
-        result_tsl = calculate_percentage_change(exit_trail_price, entry_price) if exit_trail_price else -tsl_stop_loss
+        tsl_percentage_result = calculate_percentage_change(tsl_exit_price, entry_price) if tsl_exit_price else -tsl_stop_loss
         
         # Fixed profit/loss exit
         fixed_exit = calculate_fixed_exit(point, data_after_entry, fixed_take_profit, fixed_stop_loss, points_above_max)
-        exit_fixed_price = fixed_exit['price'] if 'price' in fixed_exit else None
+        fixed_exit_price = fixed_exit['price'] if 'price' in fixed_exit else None
         fixed_exit_reason = fixed_exit['exit_reason']
-        result_fixed = calculate_percentage_change(exit_fixed_price, entry_price) if exit_fixed_price else -fixed_stop_loss
+        fixed_percentage_result = calculate_percentage_change(fixed_exit_price, entry_price) if fixed_exit_price else -fixed_stop_loss
         
         # Update cumulative results
-        cumulative_in_trade_result_tsl += result_tsl if transaction_status is None else 0
-        cumulative_in_trade_result_fixed += result_fixed if transaction_status is None else 0
-        cumulative_all_result_tsl += result_tsl
-        cumulative_all_result_fixed += result_fixed
+        cumulative_in_trade_tsl_percentage_result += tsl_percentage_result if transaction_status is None else 0
+        cumulative_in_trade_fixed_percentage_result += fixed_percentage_result if transaction_status is None else 0
+        cumulative_all_tsl_percentage_result += tsl_percentage_result
+        cumulative_all_fixed_percentage_result += fixed_percentage_result
 
         # Add transaction details
         transactions.append({
-            'entry_ts': entry_ts,
+            'ts': ts,
             'entry_price': entry_price,
             'price_change_percent': price_change_percent,
-            'exit_trail_price': exit_trail_price,
-            'result_tsl': result_tsl,
+            'tsl_exit_ts': trail_exit['ts'],
+            'tsl_exit_price': tsl_exit_price,
+            'tsl_percentage_result': tsl_percentage_result,
             'tsl_exit_reason': tsl_exit_reason,
-            'exit_fixed_price': exit_fixed_price,
-            'result_fixed': result_fixed,
+            'fixed_exit_ts': fixed_exit['ts'],
+            'fixed_exit_price': fixed_exit_price,
+            'fixed_percentage_result': fixed_percentage_result,
             'fixed_exit_reason': fixed_exit_reason,
-            'cumulative_in_trade_result_tsl': cumulative_in_trade_result_tsl,
-            'cumulative_in_trade_result_fixed': cumulative_in_trade_result_fixed,
-            'cumulative_all_result_tsl': cumulative_all_result_tsl,
-            'cumulative_all_result_fixed': cumulative_all_result_fixed,
+            'cumulative_in_trade_tsl_percentage_result': cumulative_in_trade_tsl_percentage_result,
+            'cumulative_in_trade_fixed_percentage_result': cumulative_in_trade_fixed_percentage_result,
+            'cumulative_all_tsl_percentage_result': cumulative_all_tsl_percentage_result,
+            'cumulative_all_fixed_percentage_result': cumulative_all_fixed_percentage_result,
             'transaction_status': transaction_status or "Trade"
         })
 
-    # Plot cumulative results
+    trades_df = pd.DataFrame(transactions)
+    final_tsl_traded = trades_df['cumulative_in_trade_tsl_percentage_result'].iloc[-1]
+    final_fixed_traded = trades_df['cumulative_in_trade_fixed_percentage_result'].iloc[-1]
+    final_tsl_all = trades_df['cumulative_all_tsl_percentage_result'].iloc[-1]
+    final_fixed_all = trades_df['cumulative_all_fixed_percentage_result'].iloc[-1]
+    
+    # Calculate trade counts
+    tsl_trade_count = trades_df[(trades_df['tsl_exit_reason'].notnull()) & (trades_df['transaction_status'] == "Trade")].shape[0]
+    fixed_trade_count = trades_df[(trades_df['fixed_exit_reason'].notnull()) & (trades_df['transaction_status'] == "Trade")].shape[0]
+    
+    # For 'all' counts, you can simply use the total number of rows
+    all_tsl_count = trades_df[trades_df['tsl_exit_reason'].notnull()].shape[0]
+    all_fixed_count = trades_df[trades_df['fixed_exit_reason'].notnull()].shape[0]
+    
+    trades_stats={
+        "final_tsl_traded":final_tsl_traded,
+        "final_fixed_traded":final_fixed_traded,
+        "final_tsl_all":final_tsl_all,
+        "final_fixed_all":final_fixed_all,
+        "tsl_trade_count":tsl_trade_count,
+        "fixed_trade_count":fixed_trade_count,
+        "all_tsl_count":all_tsl_count,
+        "all_fixed_count":all_fixed_count,
+    }   
+
     if show_chart:
-        # Assuming transactions is already a list or DataFrame containing the data
-        transactions_df = pd.DataFrame(transactions)
+        # Calculate the HODL percentage change series
+        initial_price = data_clean['c'].iloc[0]  # Assuming 'c' (close price) is used as the reference
+        data_clean['hodl_percentage_change'] = ((data_clean['c'] - initial_price) / initial_price) * 100
 
         # Create the figure
         plt.figure(figsize=(12, 6))
 
         # Plot the different strategies
-        plt.plot(transactions_df['entry_ts'], transactions_df['cumulative_in_trade_result_tsl'], label='TSL Strategy Traded', color='blue')
-        plt.plot(transactions_df['entry_ts'], transactions_df['cumulative_in_trade_result_fixed'], label='Fixed Strategy Traded', color='red')
-        plt.plot(transactions_df['entry_ts'], transactions_df['cumulative_all_result_tsl'], label='TSL Strategy All', color='blue', alpha=0.5)
-        plt.plot(transactions_df['entry_ts'], transactions_df['cumulative_all_result_fixed'], label='Fixed Strategy All', color='red', alpha=0.5)
+        plt.plot(trades_df['ts'], trades_df['cumulative_in_trade_tsl_percentage_result'], label='TSL Strategy Traded', color='red')
+        plt.plot(trades_df['ts'], trades_df['cumulative_in_trade_fixed_percentage_result'], label='Fixed Strategy Traded', color='blue')
+        plt.plot(trades_df['ts'], trades_df['cumulative_all_tsl_percentage_result'], label='TSL Strategy All', color='red', alpha=0.3)
+        plt.plot(trades_df['ts'], trades_df['cumulative_all_fixed_percentage_result'], label='Fixed Strategy All', color='blue', alpha=0.3)
 
-        # Adding the final results as annotations (last value in each series)
-        final_tsl_traded = transactions_df['cumulative_in_trade_result_tsl'].iloc[-1]
-        final_fixed_traded = transactions_df['cumulative_in_trade_result_fixed'].iloc[-1]
-        final_tsl_all = transactions_df['cumulative_all_result_tsl'].iloc[-1]
-        final_fixed_all = transactions_df['cumulative_all_result_fixed'].iloc[-1]
+         # Plot the price series for 'low' and 'high'
+        # plt.plot(data_clean['ts'], data_clean['l'], label='Price Low', color='red', alpha=0.7)
+        # plt.plot(data_clean['ts'], data_clean['h'], label='Price High', color='green', alpha=0.7)
+        plt.plot(data_clean['ts'], data_clean['hodl_percentage_change'], label='HODL Percentage Change', color='green', linestyle='--', linewidth=1)
 
         # Annotate the last points with text
-        plt.text(transactions_df['entry_ts'].iloc[-1], final_tsl_traded, f'TSL Traded: {final_tsl_traded:.2f}%', color='blue', fontsize=10, ha='left')
-        plt.text(transactions_df['entry_ts'].iloc[-1], final_fixed_traded, f'Fixed Traded: {final_fixed_traded:.2f}%', color='red', fontsize=10, ha='left')
-        plt.text(transactions_df['entry_ts'].iloc[-1], final_tsl_all, f'TSL All: {final_tsl_all:.2f}%', color='blue', fontsize=10, ha='left', alpha=0.5)
-        plt.text(transactions_df['entry_ts'].iloc[-1], final_fixed_all, f'Fixed All: {final_fixed_all:.2f}%', color='red', fontsize=10, ha='left', alpha=0.5)
+        plt.figtext(0.5, -0.05, f'TSL Traded: {final_tsl_traded:.2f}% ; count: {tsl_trade_count}', ha='center', va='top', fontsize=10, color='red')
+        plt.figtext(0.5, -0.1, f'Fixed Traded: {final_fixed_traded:.2f}% ; count: {fixed_trade_count}', ha='center', va='top', fontsize=10, color='blue')
+        plt.figtext(0.5, -0.15, f'TSL All: {final_tsl_all:.2f}% ; count: {all_tsl_count}', ha='center', va='top', fontsize=10, color='red', alpha=0.5)
+        plt.figtext(0.5, -0.2, f'Fixed All: {final_fixed_all:.2f}% ; count: {all_fixed_count}', ha='center', va='top', fontsize=10, color='blue', alpha=0.5)
+        plt.figtext(0.5, -0.25, f'HODL: {data_clean["hodl_percentage_change"].iloc[-1]:.2f}%', ha='center', va='top', fontsize=10, color='green')
 
         # Labels, title, and grid
         plt.xlabel('Timestamp')
@@ -137,35 +167,7 @@ def compute_trades(
         # Show the plot
         plt.show()
 
-    return pd.DataFrame(transactions)
-
-def produce_default_statistic(trades: pd.DataFrame):
-    # Add win condition columns for TSL and fixed trades
-    trades['is_win_tsl'] = trades['result_tsl'] > 0
-    trades['is_win_fixed'] = trades['result_fixed'] > 0
-    
-    win_ratios = {
-        'all': round(trades[['is_win_tsl', 'is_win_fixed']].any(axis=1).mean(), 4) if not trades.empty else 0.0,
-        'tsl': round(trades['is_win_tsl'].mean(), 4) if not trades.empty else 0.0,
-        'fixed': round(trades['is_win_fixed'].mean(), 4) if not trades.empty else 0.0,
-    }
-    
-    # Compute basic statistics, handle cases where no winning trades exist
-    stats = {
-        'all_trades': trades[['result_tsl', 'result_fixed']].describe(),
-        'winning_tsl': trades.loc[trades['is_win_tsl'], ['result_tsl']].describe() if trades['is_win_tsl'].any() else "No winning TSL trades",
-        'winning_fixed': trades.loc[trades['is_win_fixed'], ['result_fixed']].describe() if trades['is_win_fixed'].any() else "No winning Fixed-Stop trades",
-    }
-    
-    # Print results
-    print(f"Win Ratios: {win_ratios}")
-    print("\nStatistics for All Trades:")
-    print(stats['all_trades'])
-    print("\nStatistics for Winning TSL Trades:")
-    print(stats['winning_tsl'])
-    print("\nStatistics for Winning Fixed-Stop Trades:")
-    print(stats['winning_fixed'])
-    print()
+    return trades_df, trades_stats
 
 class TradeOptions(TypedDict):
     past_interval_percentage: int
@@ -180,7 +182,8 @@ class TradeOptions(TypedDict):
     use_points_above_max: Optional[bool]
     chart_title: Optional[str]
 
-def trade_simulation(interval: str, ticker: str, filter_min_interval_gap_to_skip: int, back_interval_amount_for_bsp: int, trade_options: TradeOptions, cut_potential_trades=None, file_name=None, print_trades=False):
+def trade_simulation(interval: str, ticker: str, back_interval_amount_for_bsp: int, long_signal_generator_name: str, trade_options: TradeOptions, cut_potential_trades=None,
+                     file_name=None, print_trades=False, filter_min_interval_gap_to_skip: int|None=None, show_statistic=False):
     data = pd.read_json(f"../data/data-crypto-{ticker}-{interval}.json")
     
     # Handle missing values
@@ -189,10 +192,19 @@ def trade_simulation(interval: str, ticker: str, filter_min_interval_gap_to_skip
     else:
         data_clean: pd.DataFrame = data.copy()
     print(f"Number of records after clean: {len(data_clean)}")
+
+    with pd.option_context('mode.chained_assignment', None): # turn off warning
+        data_clean.loc[:, 'filter'] = None
+        data_clean.loc[:, 'long_signal'] = False
     
-    data_clean, points_below_min, points_above_max= addMinMaxBSP(data_clean, back_interval_amount_for_bsp)
-    
-    points_below_min = filter_min_interval_gap(points_below_min, filter_min_interval_gap_to_skip, interval)
+    data_clean = filter_min_bsp(data_clean, back_interval_amount_for_bsp)[0]
+    data_clean, points_above_max= filter_max_bsp(data_clean, back_interval_amount_for_bsp)
+
+    # should choose only one long entry option
+    if long_signal_generator_name == 'long_signal_min_bsp':
+        data_clean = long_signal_min_bsp(data_clean)
+    elif long_signal_generator_name == 'long_signal_below_min_strikes':
+        data_clean = long_signal_below_min_strikes(data_clean)
     
     start_time = time.time()
 
@@ -209,16 +221,33 @@ def trade_simulation(interval: str, ticker: str, filter_min_interval_gap_to_skip
     chart_title = trade_options.get('chart_title') or ''
     points_above_max=points_above_max if use_points_above_max else None
     
+    long_entries = data_clean[data_clean['long_signal']]
+    print(f"Number of long entries: {len(long_entries)}")
+    
     if cut_potential_trades is not None:
-        points_below_min=points_below_min.loc[:cut_potential_trades]
+        long_entries=long_entries.loc[:cut_potential_trades]
 	
-    trades = compute_trades(interval, points_below_min, data_clean, past_interval_percentage, past_percentage_min_dropdown,
+    trades, trades_stats = compute_trades(interval, long_entries, data_clean, past_interval_percentage, past_percentage_min_dropdown,
                                                   tsl_trailing_stop_loss, tsl_stop_loss, tsl_take_profit, fixed_take_profit, fixed_stop_loss,
                                                   use_avg_price, show_chart, points_above_max, chart_title)
-    produce_default_statistic(trades)
+    win_ratios, statistic = produce_default_statistic(trades, verbose=show_statistic)
+    details={}
+    details['win_ratios'] = win_ratios
+    details['statstatistic'] = statistic
+    details['default_stat'] = {
+        "possible_long_entries": len(long_entries),
+        **trades_stats
+    }
+    
     if print_trades:
         print(trades)
     elapsed_time = time.time() - start_time
     print(f"Time taken for transactions: {elapsed_time:.2f} seconds")
+
     if file_name:
-        trades.to_json(f"{file_name}.json", orient='records', indent=4)
+        export_data = {
+            "details": details,
+            "trades": trades.to_dict(orient='records')  # Convert DataFrame to a list of dictionaries
+        }
+        with open(f"{file_name}.json", "w") as json_file:
+            json.dump(export_data, json_file, indent=4)

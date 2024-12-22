@@ -181,7 +181,6 @@ def long_signal_below_min_strikes(all_data):
     return all_data
 
 def produce_default_statistic(trades: pd.DataFrame, verbose=False):
-    # Compute counts for TSL and fixed stop-loss trades
     tsl_winning_trades = ((trades['tsl_percentage_result'] > 0) & (trades['status'] == "Trade")).sum()
     tsl_losing_trades = ((trades['tsl_percentage_result'] < 0) & (trades['status'] == "Trade")).sum()
     tsl_total_trades = tsl_winning_trades + tsl_losing_trades
@@ -190,34 +189,20 @@ def produce_default_statistic(trades: pd.DataFrame, verbose=False):
     all_tsl_losing_trades = (trades['tsl_percentage_result'] < 0).sum()
     all_tsl_total_trades = all_tsl_winning_trades + all_tsl_losing_trades
 
-    fixed_winning_trades = ((trades['fixed_percentage_result'] > 0) & (trades['status'] == "Trade")).sum()
-    fixed_losing_trades = ((trades['fixed_percentage_result'] < 0) & (trades['status'] == "Trade")).sum()
-    fixed_total_trades = fixed_winning_trades + fixed_losing_trades
-
-    all_fixed_winning_trades = (trades['fixed_percentage_result'] > 0).sum()
-    all_fixed_losing_trades = (trades['fixed_percentage_result'] < 0).sum()
-    all_fixed_total_trades = all_fixed_winning_trades + all_fixed_losing_trades
-
     # Compute win ratios
     win_ratios = {
         'tsl': round(tsl_winning_trades / tsl_total_trades, 4) if tsl_total_trades > 0 else 0.0,
         'all_tsl': round(all_tsl_winning_trades / all_tsl_total_trades, 4) if all_tsl_total_trades > 0 else 0.0,
-        'fixed': round(fixed_winning_trades / fixed_total_trades, 4) if fixed_total_trades > 0 else 0.0,
-        'all_fixed': round(all_fixed_winning_trades / all_fixed_total_trades, 4) if all_fixed_total_trades > 0 else 0.0,
     }
 
     # Compute basic statistics
     stats = {
         # only winning
         'traded_winning_tsl': trades.loc[(trades['tsl_percentage_result'] > 0) & (trades['status'] == "Trade"), 'tsl_percentage_result'].describe() if tsl_winning_trades > 0 else "No winning TSL trades",
-        'traded_winning_fixed': trades.loc[(trades['fixed_percentage_result'] > 0) & (trades['status'] == "Trade"), 'fixed_percentage_result'].describe() if fixed_winning_trades > 0 else "No winning Fixed-Stop trades",
         'all_winning_tsl': trades.loc[trades['tsl_percentage_result'] > 0, 'tsl_percentage_result'].describe() if all_tsl_winning_trades > 0 else "No winning TSL",
-        'all_winning_fixed': trades.loc[trades['fixed_percentage_result'] > 0, 'fixed_percentage_result'].describe() if all_fixed_winning_trades > 0 else "No winning Fixed-Stop",
         # all
         'traded_tsl': trades.loc[(trades['tsl_percentage_result'] != 0) & (trades['status'] == "Trade"), 'tsl_percentage_result'].describe() if tsl_total_trades > 0 else "No TSL trades",
-        'traded_fixed': trades.loc[(trades['fixed_percentage_result'] != 0) & (trades['status'] == "Trade"), 'fixed_percentage_result'].describe() if fixed_total_trades > 0 else "No Fixed-Stop trades",
         'all_tsl': trades.loc[trades['tsl_percentage_result'] != 0, 'tsl_percentage_result'].describe() if all_tsl_total_trades > 0 else "No TSL",
-        'all_fixed': trades.loc[trades['fixed_percentage_result'] != 0, 'fixed_percentage_result'].describe() if all_fixed_total_trades > 0 else "No Fixed-Stop",
     }
 
     
@@ -228,39 +213,23 @@ def produce_default_statistic(trades: pd.DataFrame, verbose=False):
         print('traded_winning_tsl')
         print(stats['traded_winning_tsl'])
         print()
-        print('traded_winning_fixed')
-        print(stats['traded_winning_fixed'])
-        print()
         print('all_winning_tsl')
         print(stats['all_winning_tsl'])
-        print()
-        print('all_winning_fixed')
-        print(stats['all_winning_fixed'])
         print()
         print("Statistics for all (winning + lost) 1) trades 2) trades + potential filtered trades:")
         print('traded_tsl')
         print(stats['traded_tsl'])
         print()
-        print('traded_fixed')
-        print(stats['traded_fixed'])
-        print()
         print('all_tsl')
         print(stats['all_tsl'])
-        print()
-        print('all_fixed')
-        print(stats['all_fixed'])
         print()
         
     # Handle statistics that might be strings (i.e., "No winning TSL trades" or similar)
     statistic = {
         'winning_tsl': {} if isinstance(stats['traded_winning_tsl'], str) else stats['traded_winning_tsl'].to_dict(),
-        'winning_fixed': {} if isinstance(stats['traded_winning_fixed'], str) else stats['traded_winning_fixed'].to_dict(),
         'all_winning_tsl': {} if isinstance(stats['all_winning_tsl'], str) else stats['all_winning_tsl'].to_dict(),
-        'all_winning_fixed': {} if isinstance(stats['all_winning_fixed'], str) else stats['all_winning_fixed'].to_dict(),
         'traded_tsl': {} if isinstance(stats['traded_tsl'], str) else stats['traded_tsl'].to_dict(),
-        'traded_fixed': {} if isinstance(stats['traded_fixed'], str) else stats['traded_fixed'].to_dict(),
         'all_tsl': {} if isinstance(stats['all_tsl'], str) else stats['all_tsl'].to_dict(),
-        'all_fixed': {} if isinstance(stats['all_fixed'], str) else stats['all_fixed'].to_dict(),
     }
 
     return win_ratios, statistic

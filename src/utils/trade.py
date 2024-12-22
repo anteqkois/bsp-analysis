@@ -1,7 +1,8 @@
+from itertools import product
 import time
 import json
 import matplotlib.pyplot as plt
-from typing import TypedDict, Optional
+from typing import TypedDict, Optional, Union
 import pandas as pd
 from .helpers import get_interval_coefficient, calculate_percentage_change, filter_min_interval_gap, filter_max_bsp, long_signal_below_min_strikes, filter_min_bsp, produce_default_statistic, long_signal_min_bsp
 from .strategies import calculate_trailing_exit
@@ -85,8 +86,13 @@ def compute_trades(
         })
 
     trades_df = pd.DataFrame(transactions)
-    final_tsl_traded = trades_df['cumulative_in_trade_tsl_percentage_result'].iloc[-1]
-    final_tsl_all = trades_df['cumulative_all_tsl_percentage_result'].iloc[-1]
+    tsl_percentage_result_traded = trades_df['cumulative_in_trade_tsl_percentage_result'].iloc[-1]
+    tsl_percentage_result_traded_max = trades_df['cumulative_in_trade_tsl_percentage_result'].max()
+    tsl_percentage_result_traded_min = trades_df['cumulative_in_trade_tsl_percentage_result'].min()
+
+    tsl_percentage_result_all = trades_df['cumulative_all_tsl_percentage_result'].iloc[-1]
+    tsl_percentage_result_all_max = trades_df['cumulative_all_tsl_percentage_result'].max()
+    tsl_percentage_result_all_min = trades_df['cumulative_all_tsl_percentage_result'].min()
     
     # Calculate trade counts
     tsl_trade_count_closed = trades_df[(trades_df['tsl_exit_reason'].notnull()) & (trades_df['status'] == "Trade")].shape[0]
@@ -97,9 +103,9 @@ def compute_trades(
     all_tsl_count_active = trades_df[trades_df['tsl_exit_reason'].isnull()].shape[0]
     
     trades_stats={
-        "final_tsl_traded":final_tsl_traded,
-        "final_tsl_all":final_tsl_all,
-        "tsl_trade_count":tsl_trade_count_closed,
+        "tsl_percentage_result_traded":tsl_percentage_result_traded,
+        "tsl_percentage_result_all":tsl_percentage_result_all,
+        "tsl_trade_count_closed":tsl_trade_count_closed,
         "tsl_trade_count_active":tsl_trade_count_active,
         "all_tsl_count":all_tsl_count_closed,
         "all_tsl_count_active":all_tsl_count_active,
@@ -123,9 +129,9 @@ def compute_trades(
         plt.plot(data_clean['ts'], data_clean['hodl_percentage_change'], label='HODL Percentage Change', color='green', linestyle='--', linewidth=1)
 
         # Annotate the last points with text
-        plt.figtext(0.5, -0.05, f'TSL Traded: {final_tsl_traded:.2f}% ; closed: {tsl_trade_count_closed}; active: {tsl_trade_count_active}', ha='center', va='top', fontsize=10, color='red')
-        plt.figtext(0.5, -0.1, f'TSL All: {final_tsl_all:.2f}% ; closed: {all_tsl_count_closed}; active: {all_tsl_count_active}', ha='center', va='top', fontsize=10, color='red', alpha=0.5)
-        plt.figtext(0.5, -0.25, f'HODL: {data_clean["hodl_percentage_change"].iloc[-1]:.2f}%', ha='center', va='top', fontsize=10, color='green')
+        plt.figtext(0.5, -0.05, f'TSL Traded: {tsl_percentage_result_traded:.2f}% ; closed: {tsl_trade_count_closed}; active: {tsl_trade_count_active}; min: {tsl_percentage_result_traded_min}; max: {tsl_percentage_result_traded_max}', ha='center', va='top', fontsize=10, color='red')
+        plt.figtext(0.5, -0.1, f'TSL All: {tsl_percentage_result_all:.2f}% ; closed: {all_tsl_count_closed}; active: {all_tsl_count_active}; min: {tsl_percentage_result_all_min}; max: {tsl_percentage_result_all_max}', ha='center', va='top', fontsize=10, color='red', alpha=0.5)
+        plt.figtext(0.5, -0.15, f'HODL: {data_clean["hodl_percentage_change"].iloc[-1]:.2f}%', ha='center', va='top', fontsize=10, color='green')
 
         # Labels, title, and grid
         plt.xlabel('Timestamp')
@@ -140,6 +146,7 @@ def compute_trades(
     return trades_df, trades_stats
 
 class TradeOptions(TypedDict, total=False):
+    back_interval_amount_for_bsp: int
     tsl_trailing_stop_loss: float
     tsl_stop_loss: float
     tsl_take_profit: float
@@ -150,8 +157,20 @@ class TradeOptions(TypedDict, total=False):
     use_points_above_max: Optional[bool]
     chart_title: Optional[str]
 
-def trade_simulation(interval: str, ticker: str, back_interval_amount_for_bsp: int, long_signal_generator_name: str, trade_options: TradeOptions, cut_potential_trades=None,
+def trade_simulation(interval: str, ticker: str, long_signal_generator_name: str, trade_options: TradeOptions, cut_potential_trades=None,
                      file_name=None, print_trades=False, filter_min_interval_gap_to_skip: int|None=None, show_statistic=False):
+    
+    back_interval_amount_for_bsp = trade_options.get('back_interval_amount_for_bsp') or 0
+    past_interval_percentage = trade_options.get('past_interval_percentage') or 0
+    past_percentage_min_dropdown = trade_options.get('past_percentage_min_dropdown')  or 0
+    tsl_trailing_stop_loss = trade_options.get('tsl_trailing_stop_loss') or 3
+    tsl_stop_loss = trade_options.get('tsl_stop_loss') or 5
+    tsl_take_profit = trade_options.get('tsl_take_profit') or 0
+    use_avg_price = trade_options.get('use_avg_price') or False
+    show_chart = trade_options.get('show_chart') or False
+    use_points_above_max = trade_options.get('use_points_above_max') or False 
+    chart_title = trade_options.get('chart_title') or ''
+    
     data = pd.read_json(f"../data/data-crypto-{ticker}-{interval}.json")
     
     # Handle missing values
@@ -175,17 +194,6 @@ def trade_simulation(interval: str, ticker: str, back_interval_amount_for_bsp: i
         data_clean = long_signal_below_min_strikes(data_clean)
     
     start_time = time.time()
-
-    past_interval_percentage = trade_options.get('past_interval_percentage') or 0
-    past_percentage_min_dropdown = trade_options.get('past_percentage_min_dropdown')  or 0
-    tsl_trailing_stop_loss = trade_options.get('tsl_trailing_stop_loss') or 3
-    tsl_stop_loss = trade_options.get('tsl_stop_loss') or 5
-    tsl_take_profit = trade_options.get('tsl_take_profit') or 0
-    use_avg_price = trade_options.get('use_avg_price') or False
-    show_chart = trade_options.get('show_chart') or False
-    use_points_above_max = trade_options.get('use_points_above_max') or False 
-    chart_title = trade_options.get('chart_title') or ''
-    points_above_max=points_above_max if use_points_above_max else None
     
     long_entries = data_clean[data_clean['long_signal']]
     print(f"Number of long entries: {len(long_entries)}")
@@ -193,6 +201,7 @@ def trade_simulation(interval: str, ticker: str, back_interval_amount_for_bsp: i
     if cut_potential_trades is not None:
         long_entries=long_entries.loc[:cut_potential_trades]
 	
+    points_above_max=points_above_max if use_points_above_max else None
     trades, trades_stats = compute_trades(interval, long_entries, data_clean, past_interval_percentage, past_percentage_min_dropdown,
                                                   tsl_trailing_stop_loss, tsl_stop_loss, tsl_take_profit,
                                                   use_avg_price, show_chart, points_above_max, chart_title)
@@ -218,3 +227,92 @@ def trade_simulation(interval: str, ticker: str, back_interval_amount_for_bsp: i
         }
         with open(f"{file_name}.json", "w") as json_file:
             json.dump(export_data, json_file, indent=4)
+
+    return {
+        "win_ratios": win_ratios,
+        "statistic": statistic,
+    }
+            
+class TradeOptionsUnion(TypedDict, total=False):
+    back_interval_amount_for_bsp: Union[int, list[int]]
+    past_interval_percentage: Union[float, list[float]]
+    past_percentage_min_dropdown: Union[float, list[float]]
+    tsl_trailing_stop_loss: Union[float, list[float]]
+    tsl_stop_loss: Union[float, list[float]]
+    tsl_take_profit: Union[float, list[float]]
+    use_avg_price: bool
+    show_chart: bool
+    use_points_above_max: bool
+    chart_title: Union[str, None]
+
+def trade_simulation_test_parameters(interval: str, ticker: str, long_signal_generator_name: str, 
+                         trade_options: TradeOptionsUnion, cut_potential_trades=None, 
+                         file_name=None, show_statistic=False):
+    # Define keys that can accept arrays
+    parameter_keys = [
+        "back_interval_amount_for_bsp",
+        "past_interval_percentage",
+        "past_percentage_min_dropdown",
+        "tsl_trailing_stop_loss",
+        "tsl_stop_loss",
+        "tsl_take_profit"
+    ]
+    
+    # Extract lists or single values from trade_options
+    parameter_values = {key: (trade_options[key] if isinstance(trade_options[key], list) else [trade_options[key]])
+                        for key in parameter_keys if key in trade_options}
+    
+    # Generate all combinations of the parameter values
+    param_combinations = list(product(*parameter_values.values()))
+    param_names = list(parameter_values.keys())  # To map combination values back to keys
+    
+    best_tsl_ratio = -float('inf')
+    best_all_tsl_ratio = -float('inf')
+    best_configuration = {}
+
+    # Iterate over all parameter combinations
+    for combination in param_combinations:
+        # Create a new trade_options dict for this combination
+        current_trade_options = trade_options.copy()
+        current_trade_options.update(dict(zip(param_names, combination))) # type: ignore
+
+        print(f"Testing combination: {current_trade_options}")
+        
+        # Call the trade_simulation function
+        details = trade_simulation(
+            interval=interval,
+            ticker=ticker,
+            long_signal_generator_name=long_signal_generator_name,
+            trade_options=current_trade_options, # type: ignore
+            cut_potential_trades=cut_potential_trades,
+            file_name=file_name,
+            show_statistic=show_statistic
+        )
+        
+        # Retrieve the win_ratios from the details
+        win_ratios = details['win_ratios'] # type: ignore
+        tsl_ratio = win_ratios.get('tsl', 0)
+        all_tsl_ratio = win_ratios.get('all_tsl', 0)
+        
+        # Update the best configuration based on tsl ratio
+        if tsl_ratio > best_tsl_ratio:
+            best_tsl_ratio = tsl_ratio
+            best_configuration['tsl'] = {
+                'trade_options': current_trade_options,
+                'win_ratio': tsl_ratio
+            }
+        
+        # Update the best configuration based on all_tsl ratio
+        if all_tsl_ratio > best_all_tsl_ratio:
+            best_all_tsl_ratio = all_tsl_ratio
+            best_configuration['all_tsl'] = {
+                'trade_options': current_trade_options,
+                'win_ratio': all_tsl_ratio
+            }
+
+    print("\nBest Configuration Based on TSL Win Ratio:")
+    print(best_configuration['tsl'])
+    print("\nBest Configuration Based on All TSL Win Ratio:")
+    print(best_configuration['all_tsl'])
+    
+    return best_configuration

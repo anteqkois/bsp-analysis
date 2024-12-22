@@ -19,7 +19,8 @@ def compute_trades(
     use_avg_price: bool = False,
     show_chart: bool = True,
     points_above_max: Optional[pd.DataFrame] = None,
-    chart_title: str = 'Cumulative Strategy Results'
+    chart_title: str = 'Cumulative Strategy Results',
+    trade_options = {}
     ):
     transactions = []
     cumulative_in_trade_tsl_percentage_result = 0
@@ -133,6 +134,19 @@ def compute_trades(
         plt.figtext(0.5, -0.1, f'TSL All: {tsl_percentage_result_all:.2f}% ; closed: {all_tsl_count_closed}; active: {all_tsl_count_active}; min: {tsl_percentage_result_all_min}; max: {tsl_percentage_result_all_max}', ha='center', va='top', fontsize=10, color='red', alpha=0.5)
         plt.figtext(0.5, -0.15, f'HODL: {data_clean["hodl_percentage_change"].iloc[-1]:.2f}%', ha='center', va='top', fontsize=10, color='green')
 
+        # trade options info
+        # options_text = ", ".join(f"{key}={value}" for key, value in trade_options.items())
+        # chart_title = f"{chart_title} ({options_text})" if chart_title else options_text
+        
+        options_text = "\n".join(f"{key}: {value}" for key, value in trade_options.items())
+        plt.text(
+            0.01, 0.98, options_text,
+            transform=plt.gca().transAxes,
+            fontsize=7,
+            verticalalignment='top',
+            bbox=dict(facecolor='white', edgecolor='black', boxstyle='round,pad=0.2')  # Background styling
+        )
+
         # Labels, title, and grid
         plt.xlabel('Timestamp')
         plt.ylabel('Cumulative Result (%)')
@@ -204,7 +218,7 @@ def trade_simulation(interval: str, ticker: str, long_signal_generator_name: str
     points_above_max=points_above_max if use_points_above_max else None
     trades, trades_stats = compute_trades(interval, long_entries, data_clean, past_interval_percentage, past_percentage_min_dropdown,
                                                   tsl_trailing_stop_loss, tsl_stop_loss, tsl_take_profit,
-                                                  use_avg_price, show_chart, points_above_max, chart_title)
+                                                  use_avg_price, show_chart, points_above_max, chart_title, trade_options)
 
     win_ratios, statistic = produce_default_statistic(trades, verbose=show_statistic)
     details={}

@@ -65,8 +65,8 @@ def filter_min_interval_gap(data, min_interval_gap: int, interval: str):
 
     for idx, row in data.iterrows():
         # Default to assigning "Filter Interval Gap"
-        if pd.isna(data.loc[idx, 'filter']):
-            data.loc[idx, 'filter'] = "Filter Interval Gap"
+        if pd.isna(data.loc[idx, 'long_signal_filter']):
+            data.loc[idx, 'long_signal_filter'] = "Filter Interval Gap"
 
         if row['below_min']:
             is_below_min_streak = True  # We're in a streak of `below_min == True`
@@ -76,11 +76,24 @@ def filter_min_interval_gap(data, min_interval_gap: int, interval: str):
             gap = row['ts'] - last_valid_time  # Calculate the gap between current time and the last valid `True`
             if gap >= min_interval_gap * get_interval_coefficient(interval):
                 # If the gap exceeds `min_interval_gap`, stop filtering at this point
-                data.loc[idx, 'filter'] = None
+                data.loc[idx, 'long_signal_filter'] = None
             # Reset streak
             is_below_min_streak = False
     
     print(f"#filter_min_interval_gap after gap:{min_interval_gap} length:{len(data)}")
+    return data
+
+def filter_bsp_required_min_value(data, required_min_value: float):
+    trades_count_before = len(data.loc[data['long_signal']])
+    print(f"#filter_bsp_required_min_value before filter_bsp_required_min_value:{filter_bsp_required_min_value} length:{trades_count_before}")
+
+    data = data.copy()
+    
+    data.loc[(data['long_signal']) & (data['min_bsp'] > required_min_value), ['long_signal', 'long_signal_filter']] = [False, 'No Required Minimum BSP Value']
+
+    trades_count_after = len(data.loc[data['long_signal']])
+    
+    print(f"#filter_bsp_required_min_value after filter_bsp_required_min_value:{filter_bsp_required_min_value} length:{trades_count_after}")
     return data
 
 # def filter_min_interval_gap(data, min_interval_gap: int, interval: str):

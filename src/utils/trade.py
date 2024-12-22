@@ -4,7 +4,7 @@ import json
 import matplotlib.pyplot as plt
 from typing import TypedDict, Optional, Union
 import pandas as pd
-from .helpers import get_interval_coefficient, calculate_percentage_change, filter_min_interval_gap, filter_max_bsp, long_signal_below_min_strikes, filter_min_bsp, produce_default_statistic, long_signal_min_bsp
+from .helpers import get_interval_coefficient, calculate_percentage_change, filter_min_interval_gap, filter_max_bsp, long_signal_below_min_strikes, filter_min_bsp, produce_default_statistic, long_signal_min_bsp, filter_bsp_required_min_value
 from .strategies import calculate_trailing_exit
 
 def compute_trades(
@@ -41,8 +41,8 @@ def compute_trades(
         # Determine entry price
         entry_price = (point['l'] + point['h']) / 2 if use_avg_price else point['c']
 
-        if pd.notna(point['filter']):
-            status = point['filter']
+        if pd.notna(point['long_signal_filter']):
+            status = point['long_signal_filter']
         # Check optional condition for past percentage drop
         elif past_interval_percentage != 0 and past_percentage_min_dropdown != 0:
             past_ts = ts - past_interval_percentage * get_interval_coefficient(interval)
@@ -160,7 +160,8 @@ def compute_trades(
     return trades_df, trades_stats
 
 class TradeOptions(TypedDict, total=False):
-    back_interval_amount_for_bsp: int
+    bsp_back_interval_amount: int
+    bsp_required_min_value: Optional[float]
     tsl_trailing_stop_loss: float
     tsl_stop_loss: float
     tsl_take_profit: float
@@ -174,7 +175,8 @@ class TradeOptions(TypedDict, total=False):
 def trade_simulation(interval: str, ticker: str, long_signal_generator_name: str, trade_options: TradeOptions, cut_potential_trades=None,
                      file_name=None, print_trades=False, filter_min_interval_gap_to_skip: int|None=None, show_statistic=False):
     
-    back_interval_amount_for_bsp = trade_options.get('back_interval_amount_for_bsp') or 0
+    bsp_back_interval_amount = trade_options.get('bsp_back_interval_amount') or 0
+    bsp_required_min_value = trade_options.get('bsp_required_min_value') or 0
     past_interval_percentage = trade_options.get('past_interval_percentage') or 0
     past_percentage_min_dropdown = trade_options.get('past_percentage_min_dropdown')  or 0
     tsl_trailing_stop_loss = trade_options.get('tsl_trailing_stop_loss') or 3
@@ -195,17 +197,21 @@ def trade_simulation(interval: str, ticker: str, long_signal_generator_name: str
     print(f"Number of records after clean: {len(data_clean)}")
 
     with pd.option_context('mode.chained_assignment', None): # turn off warning
-        data_clean.loc[:, 'filter'] = None
+        data_clean.loc[:, 'long_signal_filter'] = None
         data_clean.loc[:, 'long_signal'] = False
     
-    data_clean = filter_min_bsp(data_clean, back_interval_amount_for_bsp)[0]
-    data_clean, points_above_max= filter_max_bsp(data_clean, back_interval_amount_for_bsp)
+    data_clean = filter_min_bsp(data_clean, bsp_back_interval_amount)[0]
+    data_clean, points_above_max= filter_max_bsp(data_clean, bsp_back_interval_amount)
 
     # should choose only one long entry option
     if long_signal_generator_name == 'long_signal_min_bsp':
         data_clean = long_signal_min_bsp(data_clean)
     elif long_signal_generator_name == 'long_signal_below_min_strikes':
         data_clean = long_signal_below_min_strikes(data_clean)
+
+    # filters
+    if bsp_required_min_value:
+        data_clean = filter_bsp_required_min_value(data_clean, bsp_required_min_value)
     
     start_time = time.time()
     
@@ -248,7 +254,8 @@ def trade_simulation(interval: str, ticker: str, long_signal_generator_name: str
     }
             
 class TradeOptionsUnion(TypedDict, total=False):
-    back_interval_amount_for_bsp: Union[int, list[int]]
+    bsp_back_interval_amount: Union[int, list[int]]
+    bsp_required_min_value: Union[float, list[float]]
     past_interval_percentage: Union[float, list[float]]
     past_percentage_min_dropdown: Union[float, list[float]]
     tsl_trailing_stop_loss: Union[float, list[float]]
@@ -264,7 +271,8 @@ def trade_simulation_test_parameters(interval: str, ticker: str, long_signal_gen
                          file_name=None, show_statistic=False):
     # Define keys that can accept arrays
     parameter_keys = [
-        "back_interval_amount_for_bsp",
+        "bsp_back_interval_amount",
+        "bsp_required_min_value",
         "past_interval_percentage",
         "past_percentage_min_dropdown",
         "tsl_trailing_stop_loss",
